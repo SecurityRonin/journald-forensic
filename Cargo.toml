@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/journald-core",
+    "crates/journald-binary",
+    "crates/journald-integrity",
+    "crates/journald-carver",
+    "crates/jd-cli",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+repository = "https://github.com/SecurityRonin/journald-forensic"
+
+[workspace.dependencies]
+chrono = { version = "0.4", default-features = false, features = ["alloc", "serde"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+tempfile = "3"
+assert_cmd = "2"
+
+# Internal
+journald-core = { path = "crates/journald-core" }
+journald-binary = { path = "crates/journald-binary" }
+journald-integrity = { path = "crates/journald-integrity" }
+journald-carver = { path = "crates/journald-carver" }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
