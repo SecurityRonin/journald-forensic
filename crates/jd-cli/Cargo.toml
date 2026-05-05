@@ -1,0 +1,27 @@
+[package]
+name = "jd-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "jd"
+path = "src/main.rs"
+
+[dependencies]
+journald-core = { workspace = true }
+journald-binary = { workspace = true }
+journald-integrity = { workspace = true }
+journald-carver = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
