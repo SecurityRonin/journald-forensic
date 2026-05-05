@@ -4,8 +4,9 @@
 
 use journald_core::JournalError;
 
-/// The 8-byte file magic at offset 0 of the journal file header object.
-pub const JOURNAL_MAGIC: &[u8; 8] = b"LPKSHHRH";
+// KNOWLEDGE constants live in forensicnomicon; re-export for downstream crates.
+pub use forensicnomicon::journald::JOURNAL_MAGIC;
+use forensicnomicon::journald::{header_offset, object_header_offset, object_type as nom_object_type};
 
 /// Journal file state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -93,30 +94,43 @@ pub fn parse_journal_magic(buf: &[u8]) -> Result<(), JournalError> {
 /// 216..224  tail_entry_realtime (u64 LE)
 /// ```
 pub fn parse_header(buf: &[u8]) -> Result<JournalHeader, JournalError> {
-    const MIN_SIZE: usize = 224;
-    if buf.len() < MIN_SIZE {
-        return Err(JournalError::BufferTooShort { needed: MIN_SIZE, got: buf.len() });
+    if buf.len() < header_offset::MIN_HEADER_SIZE {
+        return Err(JournalError::BufferTooShort {
+            needed: header_offset::MIN_HEADER_SIZE,
+            got: buf.len(),
+        });
     }
     parse_journal_magic(buf)?;
 
-    let compatible_flags = u32::from_le_bytes(buf[8..12].try_into().unwrap());
-    let incompatible_flags = u32::from_le_bytes(buf[12..16].try_into().unwrap());
-    let state = match buf[16] {
+    let cf_start = header_offset::COMPATIBLE_FLAGS;
+    let compatible_flags = u32::from_le_bytes(buf[cf_start..cf_start + 4].try_into().unwrap());
+    let icf_start = header_offset::INCOMPATIBLE_FLAGS;
+    let incompatible_flags = u32::from_le_bytes(buf[icf_start..icf_start + 4].try_into().unwrap());
+    let state = match buf[header_offset::STATE] {
         0 => JournalState::Offline,
         2 => JournalState::Archived,
         _ => JournalState::Online, // 1 = Online; treat unknown as Online (suspicious)
     };
 
-    let machine_id: [u8; 16] = buf[40..56].try_into().unwrap();
-    let boot_id: [u8; 16] = buf[56..72].try_into().unwrap();
-    let seqnum_id: [u8; 16] = buf[72..88].try_into().unwrap();
+    let mid = header_offset::MACHINE_ID;
+    let machine_id: [u8; 16] = buf[mid..mid + 16].try_into().unwrap();
+    let bid = header_offset::BOOT_ID;
+    let boot_id: [u8; 16] = buf[bid..bid + 16].try_into().unwrap();
+    let sid = header_offset::SEQNUM_ID;
+    let seqnum_id: [u8; 16] = buf[sid..sid + 16].try_into().unwrap();
 
-    let n_objects = u64::from_le_bytes(buf[160..168].try_into().unwrap());
-    let n_entries = u64::from_le_bytes(buf[168..176].try_into().unwrap());
-    let tail_entry_seqnum = u64::from_le_bytes(buf[176..184].try_into().unwrap());
-    let head_entry_seqnum = u64::from_le_bytes(buf[184..192].try_into().unwrap());
-    let head_entry_realtime = u64::from_le_bytes(buf[208..216].try_into().unwrap());
-    let tail_entry_realtime = u64::from_le_bytes(buf[216..224].try_into().unwrap());
+    let off_n_objects = header_offset::N_OBJECTS;
+    let n_objects = u64::from_le_bytes(buf[off_n_objects..off_n_objects + 8].try_into().unwrap());
+    let off_n_entries = header_offset::N_ENTRIES;
+    let n_entries = u64::from_le_bytes(buf[off_n_entries..off_n_entries + 8].try_into().unwrap());
+    let off_tail_seqnum = header_offset::TAIL_ENTRY_SEQNUM;
+    let tail_entry_seqnum = u64::from_le_bytes(buf[off_tail_seqnum..off_tail_seqnum + 8].try_into().unwrap());
+    let off_head_seqnum = header_offset::HEAD_ENTRY_SEQNUM;
+    let head_entry_seqnum = u64::from_le_bytes(buf[off_head_seqnum..off_head_seqnum + 8].try_into().unwrap());
+    let off_head_rt = header_offset::HEAD_ENTRY_REALTIME;
+    let head_entry_realtime = u64::from_le_bytes(buf[off_head_rt..off_head_rt + 8].try_into().unwrap());
+    let off_tail_rt = header_offset::TAIL_ENTRY_REALTIME;
+    let tail_entry_realtime = u64::from_le_bytes(buf[off_tail_rt..off_tail_rt + 8].try_into().unwrap());
 
     Ok(JournalHeader {
         compatible_flags,
@@ -142,26 +156,30 @@ pub fn parse_header(buf: &[u8]) -> Result<JournalHeader, JournalError> {
 /// - offset 2..7: reserved [u8; 6]
 /// - offset 8..15: size u64
 pub fn parse_object_header(buf: &[u8]) -> Result<ObjectHeader, JournalError> {
-    if buf.len() < 16 {
-        return Err(JournalError::BufferTooShort { needed: 16, got: buf.len() });
+    if buf.len() < object_header_offset::HEADER_SIZE {
+        return Err(JournalError::BufferTooShort {
+            needed: object_header_offset::HEADER_SIZE,
+            got: buf.len(),
+        });
     }
-    let object_type = object_type_from_byte(buf[0])?;
-    let flags = buf[1];
-    let size = u64::from_le_bytes(buf[8..16].try_into().unwrap());
+    let object_type = object_type_from_byte(buf[object_header_offset::TYPE])?;
+    let flags = buf[object_header_offset::FLAGS];
+    let sz = object_header_offset::SIZE;
+    let size = u64::from_le_bytes(buf[sz..sz + 8].try_into().unwrap());
     Ok(ObjectHeader { object_type, flags, size })
 }
 
 /// Map a raw object type byte to `JournalObjectType`.
 pub fn object_type_from_byte(b: u8) -> Result<JournalObjectType, JournalError> {
     match b {
-        0 => Ok(JournalObjectType::Unused),
-        1 => Ok(JournalObjectType::Data),
-        2 => Ok(JournalObjectType::Field),
-        3 => Ok(JournalObjectType::Entry),
-        4 => Ok(JournalObjectType::DataHashTable),
-        5 => Ok(JournalObjectType::FieldHashTable),
-        6 => Ok(JournalObjectType::EntryArray),
-        7 => Ok(JournalObjectType::Tag),
+        v if v == nom_object_type::UNUSED => Ok(JournalObjectType::Unused),
+        v if v == nom_object_type::DATA => Ok(JournalObjectType::Data),
+        v if v == nom_object_type::FIELD => Ok(JournalObjectType::Field),
+        v if v == nom_object_type::ENTRY => Ok(JournalObjectType::Entry),
+        v if v == nom_object_type::DATA_HASH_TABLE => Ok(JournalObjectType::DataHashTable),
+        v if v == nom_object_type::FIELD_HASH_TABLE => Ok(JournalObjectType::FieldHashTable),
+        v if v == nom_object_type::ENTRY_ARRAY => Ok(JournalObjectType::EntryArray),
+        v if v == nom_object_type::TAG => Ok(JournalObjectType::Tag),
         _ => Err(JournalError::InvalidObjectType { type_byte: b }),
     }
 }
