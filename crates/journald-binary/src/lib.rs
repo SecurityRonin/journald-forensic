@@ -55,12 +55,83 @@ pub struct ObjectHeader {
 
 /// Verify that `buf` begins with the journal magic bytes.
 pub fn parse_journal_magic(buf: &[u8]) -> Result<(), JournalError> {
-    todo!()
+    if buf.len() < 8 {
+        return Err(JournalError::BufferTooShort { needed: 8, got: buf.len() });
+    }
+    let found: [u8; 8] = buf[..8].try_into().unwrap();
+    if &found != JOURNAL_MAGIC {
+        return Err(JournalError::InvalidMagic { found });
+    }
+    Ok(())
 }
 
 /// Parse the journal file header from `buf`.
+///
+/// Minimum layout (offsets are from the start of the header object, which
+/// begins with the 8-byte magic):
+///
+/// ```text
+///  0..8    signature / magic
+///  8..12   compatible_flags (u32 LE)
+/// 12..16   incompatible_flags (u32 LE)
+/// 16       state (u8)
+/// 17..24   reserved (7 bytes)
+/// 24..40   file_id [u8; 16]
+/// 40..56   machine_id [u8; 16]
+/// 56..72   boot_id [u8; 16]
+/// 72..88   seqnum_id [u8; 16]
+/// 88..96   header_size (u64 LE)
+/// 96..104  arena_size (u64 LE)
+/// ...
+/// (fields below are at higher offsets; read what we need)
+/// 160..168  n_objects (u64 LE)
+/// 168..176  n_entries (u64 LE)
+/// 176..184  tail_entry_seqnum (u64 LE)
+/// 184..192  head_entry_seqnum (u64 LE)
+/// ...
+/// 208..216  head_entry_realtime (u64 LE)
+/// 216..224  tail_entry_realtime (u64 LE)
+/// ```
 pub fn parse_header(buf: &[u8]) -> Result<JournalHeader, JournalError> {
-    todo!()
+    const MIN_SIZE: usize = 224;
+    if buf.len() < MIN_SIZE {
+        return Err(JournalError::BufferTooShort { needed: MIN_SIZE, got: buf.len() });
+    }
+    parse_journal_magic(buf)?;
+
+    let compatible_flags = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+    let incompatible_flags = u32::from_le_bytes(buf[12..16].try_into().unwrap());
+    let state = match buf[16] {
+        0 => JournalState::Offline,
+        2 => JournalState::Archived,
+        _ => JournalState::Online, // 1 = Online; treat unknown as Online (suspicious)
+    };
+
+    let machine_id: [u8; 16] = buf[40..56].try_into().unwrap();
+    let boot_id: [u8; 16] = buf[56..72].try_into().unwrap();
+    let seqnum_id: [u8; 16] = buf[72..88].try_into().unwrap();
+
+    let n_objects = u64::from_le_bytes(buf[160..168].try_into().unwrap());
+    let n_entries = u64::from_le_bytes(buf[168..176].try_into().unwrap());
+    let tail_entry_seqnum = u64::from_le_bytes(buf[176..184].try_into().unwrap());
+    let head_entry_seqnum = u64::from_le_bytes(buf[184..192].try_into().unwrap());
+    let head_entry_realtime = u64::from_le_bytes(buf[208..216].try_into().unwrap());
+    let tail_entry_realtime = u64::from_le_bytes(buf[216..224].try_into().unwrap());
+
+    Ok(JournalHeader {
+        compatible_flags,
+        incompatible_flags,
+        state,
+        machine_id,
+        boot_id,
+        seqnum_id,
+        n_objects,
+        n_entries,
+        tail_entry_seqnum,
+        head_entry_seqnum,
+        head_entry_realtime,
+        tail_entry_realtime,
+    })
 }
 
 /// Parse an object header from `buf` (must be at least 16 bytes).
@@ -71,12 +142,28 @@ pub fn parse_header(buf: &[u8]) -> Result<JournalHeader, JournalError> {
 /// - offset 2..7: reserved [u8; 6]
 /// - offset 8..15: size u64
 pub fn parse_object_header(buf: &[u8]) -> Result<ObjectHeader, JournalError> {
-    todo!()
+    if buf.len() < 16 {
+        return Err(JournalError::BufferTooShort { needed: 16, got: buf.len() });
+    }
+    let object_type = object_type_from_byte(buf[0])?;
+    let flags = buf[1];
+    let size = u64::from_le_bytes(buf[8..16].try_into().unwrap());
+    Ok(ObjectHeader { object_type, flags, size })
 }
 
 /// Map a raw object type byte to `JournalObjectType`.
 pub fn object_type_from_byte(b: u8) -> Result<JournalObjectType, JournalError> {
-    todo!()
+    match b {
+        0 => Ok(JournalObjectType::Unused),
+        1 => Ok(JournalObjectType::Data),
+        2 => Ok(JournalObjectType::Field),
+        3 => Ok(JournalObjectType::Entry),
+        4 => Ok(JournalObjectType::DataHashTable),
+        5 => Ok(JournalObjectType::FieldHashTable),
+        6 => Ok(JournalObjectType::EntryArray),
+        7 => Ok(JournalObjectType::Tag),
+        _ => Err(JournalError::InvalidObjectType { type_byte: b }),
+    }
 }
 
 #[cfg(test)]
