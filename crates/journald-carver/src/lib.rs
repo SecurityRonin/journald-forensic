@@ -17,7 +17,20 @@ pub struct CarvedEntry {
 ///
 /// Returns the byte offsets where the magic was found.
 pub fn scan_for_journal_magic(data: &[u8]) -> Vec<u64> {
-    todo!()
+    if data.len() < 8 {
+        return Vec::new();
+    }
+    data.windows(8)
+        .enumerate()
+        .filter_map(|(i, w)| {
+            if w == JOURNAL_MAGIC.as_ref() {
+                #[allow(clippy::cast_possible_truncation)]
+                Some(i as u64)
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// Scan for Entry object headers (type byte = 3) in a raw byte slice.
@@ -25,7 +38,35 @@ pub fn scan_for_journal_magic(data: &[u8]) -> Vec<u64> {
 /// For each candidate position, check that the object header is plausible
 /// (non-zero size, type = Entry). Returns the list of carved entries.
 pub fn scan_for_entry_objects(data: &[u8]) -> Vec<CarvedEntry> {
-    todo!()
+    let mut out = Vec::new();
+    if data.len() < 16 {
+        return out;
+    }
+    let mut i = 0usize;
+    while i + 16 <= data.len() {
+        let buf = &data[i..];
+        if buf[0] == 3 && is_plausible_object_header(buf) {
+            let size = u64::from_le_bytes(buf[8..16].try_into().unwrap());
+            // Safe: we only process files that fit in memory (usize range)
+            #[allow(clippy::cast_possible_truncation)]
+            let end = ((i as u64).saturating_add(size) as usize).min(data.len());
+            let raw = data[i..end].to_vec();
+            out.push(CarvedEntry {
+                #[allow(clippy::cast_possible_truncation)]
+                offset: i as u64,
+                object_type: 3,
+                size,
+                raw,
+            });
+            // Advance by size to skip this object, or by 1 if size is 0/huge
+            #[allow(clippy::cast_possible_truncation)]
+            let advance = (size as usize).max(1);
+            i += advance;
+        } else {
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Returns `true` if the bytes at the start of `buf` look like a valid object header.
@@ -35,7 +76,15 @@ pub fn scan_for_entry_objects(data: &[u8]) -> Vec<CarvedEntry> {
 /// - Type byte in 0..=7
 /// - Size > 0
 pub fn is_plausible_object_header(buf: &[u8]) -> bool {
-    todo!()
+    if buf.len() < 16 {
+        return false;
+    }
+    let type_byte = buf[0];
+    if type_byte > 7 {
+        return false;
+    }
+    let size = u64::from_le_bytes(buf[8..16].try_into().unwrap());
+    size > 0
 }
 
 #[cfg(test)]
