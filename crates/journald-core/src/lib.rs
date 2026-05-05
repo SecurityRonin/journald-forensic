@@ -31,13 +31,27 @@ pub struct JournalEntry {
 impl JournalEntry {
     /// Convert `realtime_us` (microseconds since Unix epoch) to a UTC `DateTime`.
     pub fn realtime_as_datetime(&self) -> DateTime<Utc> {
-        todo!()
+        // realtime_us is microseconds since epoch; max sane value fits i64
+        #[allow(clippy::cast_possible_wrap)]
+        let secs = (self.realtime_us / 1_000_000) as i64;
+        // remainder is 0..999_999 µs → 0..999_999_000 ns, always fits u32
+        #[allow(clippy::cast_possible_truncation)]
+        let nanos = ((self.realtime_us % 1_000_000) * 1_000) as u32;
+        Utc.timestamp_opt(secs, nanos)
+            .single()
+            .unwrap_or_else(|| Utc.timestamp_opt(0, 0).unwrap())
     }
 
     /// Look up a text field by key name. Returns `None` if the key is absent
     /// or if the value is binary.
     pub fn field(&self, key: &str) -> Option<&str> {
-        todo!()
+        self.fields.iter().find(|f| f.key == key).and_then(|f| {
+            if let JournalFieldValue::Text(ref s) = f.value {
+                Some(s.as_str())
+            } else {
+                None
+            }
+        })
     }
 
     /// Convenience: return the `MESSAGE` field.
@@ -47,7 +61,7 @@ impl JournalEntry {
 
     /// Parse the `PRIORITY` field as a `u8`. Returns `None` if absent or unparseable.
     pub fn priority(&self) -> Option<u8> {
-        todo!()
+        self.field("PRIORITY")?.parse().ok()
     }
 
     /// Return the `SYSLOG_IDENTIFIER` field.
@@ -57,7 +71,7 @@ impl JournalEntry {
 
     /// Parse the `_PID` field as a `u32`. Returns `None` if absent or unparseable.
     pub fn pid(&self) -> Option<u32> {
-        todo!()
+        self.field("_PID")?.parse().ok()
     }
 }
 
@@ -76,15 +90,89 @@ pub struct JournalCursor {
 
 impl JournalCursor {
     /// Parse a journal cursor string into a `JournalCursor`.
+    ///
+    /// Expected format:
+    /// `s=<uuid_hex32>;i=<hex>;b=<uuid_hex32>;m=<hex>;t=<hex>;x=<hex>`
     pub fn parse(cursor_str: &str) -> Result<Self, JournalError> {
-        todo!()
+        let make_err = || JournalError::InvalidCursor {
+            cursor: cursor_str.to_string(),
+        };
+
+        let mut seqnum_id: Option<[u8; 16]> = None;
+        let mut seqnum: Option<u64> = None;
+        let mut boot_id: Option<[u8; 16]> = None;
+        let mut monotonic_us: Option<u64> = None;
+        let mut realtime_us: Option<u64> = None;
+        let mut xor_hash: Option<u64> = None;
+
+        for part in cursor_str.split(';') {
+            let (key, val) = part.split_once('=').ok_or_else(make_err)?;
+            match key {
+                "s" => seqnum_id = Some(parse_uuid_hex(val).ok_or_else(make_err)?),
+                "i" => seqnum = Some(u64::from_str_radix(val, 16).map_err(|_| make_err())?),
+                "b" => boot_id = Some(parse_uuid_hex(val).ok_or_else(make_err)?),
+                "m" => monotonic_us = Some(u64::from_str_radix(val, 16).map_err(|_| make_err())?),
+                "t" => realtime_us = Some(u64::from_str_radix(val, 16).map_err(|_| make_err())?),
+                "x" => xor_hash = Some(u64::from_str_radix(val, 16).map_err(|_| make_err())?),
+                _ => return Err(make_err()),
+            }
+        }
+
+        Ok(JournalCursor {
+            seqnum_id: seqnum_id.ok_or_else(make_err)?,
+            seqnum: seqnum.ok_or_else(make_err)?,
+            boot_id: boot_id.ok_or_else(make_err)?,
+            monotonic_us: monotonic_us.ok_or_else(make_err)?,
+            realtime_us: realtime_us.ok_or_else(make_err)?,
+            xor_hash: xor_hash.ok_or_else(make_err)?,
+        })
     }
 
     /// Serialize back to the canonical cursor string format.
     #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
-        todo!()
+        format!(
+            "s={};i={:x};b={};m={:x};t={:x};x={:x}",
+            uuid_to_hex(&self.seqnum_id),
+            self.seqnum,
+            uuid_to_hex(&self.boot_id),
+            self.monotonic_us,
+            self.realtime_us,
+            self.xor_hash,
+        )
     }
+}
+
+/// Parse a 32-char hex string (no dashes) into a 16-byte UUID array.
+fn parse_uuid_hex(s: &str) -> Option<[u8; 16]> {
+    if s.len() != 32 {
+        return None;
+    }
+    let mut out = [0u8; 16];
+    for (i, chunk) in s.as_bytes().chunks(2).enumerate() {
+        let hi = hex_nibble(chunk[0])?;
+        let lo = hex_nibble(chunk[1])?;
+        out[i] = (hi << 4) | lo;
+    }
+    Some(out)
+}
+
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn uuid_to_hex(bytes: &[u8; 16]) -> String {
+    use fmt::Write as _;
+    let mut s = String::with_capacity(32);
+    for b in bytes {
+        write!(s, "{b:02x}").unwrap();
+    }
+    s
 }
 
 /// Errors produced by the journald-forensic library.
