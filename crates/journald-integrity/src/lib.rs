@@ -28,14 +28,46 @@ pub enum IntegrityKind {
 ///
 /// A gap at `[A, B]` where `B > A + 1` means `B - A - 1` entries were deleted.
 pub fn detect_sequence_gaps(seqnums: &[u64]) -> Vec<IntegrityIndicator> {
-    todo!()
+    let mut out = Vec::new();
+    for window in seqnums.windows(2) {
+        let (prev, next) = (window[0], window[1]);
+        if next > prev + 1 {
+            let deleted = next - prev - 1;
+            out.push(IntegrityIndicator {
+                kind: IntegrityKind::SequenceGap,
+                description: format!(
+                    "{deleted} entr{} deleted between seqnum {prev} and {next}",
+                    if deleted == 1 { "y" } else { "ies" }
+                ),
+                seqnum_start: Some(prev),
+                seqnum_end: Some(next),
+            });
+        }
+    }
+    out
 }
 
 /// Detect timestamp regressions in a list of realtime timestamps (microseconds).
 ///
 /// A regression is any timestamp strictly less than the previous one.
 pub fn detect_timestamp_regressions(timestamps_us: &[u64]) -> Vec<IntegrityIndicator> {
-    todo!()
+    let mut out = Vec::new();
+    let mut prev = 0u64;
+    for &ts in timestamps_us {
+        if ts < prev {
+            out.push(IntegrityIndicator {
+                kind: IntegrityKind::TimestampRegression,
+                description: format!(
+                    "timestamp regression: {ts} < previous {prev} (delta: {})",
+                    prev - ts
+                ),
+                seqnum_start: None,
+                seqnum_end: None,
+            });
+        }
+        prev = ts;
+    }
+    out
 }
 
 /// Detect file truncation.
@@ -46,7 +78,19 @@ pub fn detect_truncation(
     tail_object_offset: u64,
     last_object_size: u64,
 ) -> Option<IntegrityIndicator> {
-    todo!()
+    let needed = tail_object_offset.saturating_add(last_object_size);
+    if file_size < needed {
+        Some(IntegrityIndicator {
+            kind: IntegrityKind::Truncation,
+            description: format!(
+                "file truncated: size {file_size} < tail_object_offset {tail_object_offset} + last_object_size {last_object_size} = {needed}"
+            ),
+            seqnum_start: None,
+            seqnum_end: None,
+        })
+    } else {
+        None
+    }
 }
 
 /// Detect suspicious journal state.
@@ -55,7 +99,18 @@ pub fn detect_truncation(
 /// when the file is being analysed forensically (it could mean active tampering
 /// or that the machine crashed, hiding deleted entries).
 pub fn detect_online_state(state_byte: u8) -> Option<IntegrityIndicator> {
-    todo!()
+    if state_byte == 1 {
+        Some(IntegrityIndicator {
+            kind: IntegrityKind::InvalidState,
+            description: "journal state is ONLINE — file was not cleanly closed; \
+                          possible unclean shutdown or active tampering"
+                .to_string(),
+            seqnum_start: None,
+            seqnum_end: None,
+        })
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
