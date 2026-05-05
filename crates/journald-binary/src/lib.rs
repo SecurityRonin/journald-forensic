@@ -170,6 +170,24 @@ pub fn object_type_from_byte(b: u8) -> Result<JournalObjectType, JournalError> {
 mod tests {
     use super::*;
 
+    // --- forensicnomicon integration tests (RED: forensicnomicon dep not yet wired) ---
+
+    #[test]
+    fn binary_magic_matches_forensicnomicon_constant() {
+        use forensicnomicon::journald::{JOURNAL_MAGIC as NOM_MAGIC, object_type, header_offset};
+        assert_eq!(NOM_MAGIC, b"LPKSHHRH");
+        assert_eq!(object_type::ENTRY, 3);
+        assert_eq!(header_offset::BOOT_ID, 56);
+    }
+
+    #[test]
+    fn parse_magic_uses_forensicnomicon_constant() {
+        use forensicnomicon::journald::JOURNAL_MAGIC as NOM_MAGIC;
+        let mut buf = vec![0u8; 256];
+        buf[..8].copy_from_slice(NOM_MAGIC);
+        assert!(parse_journal_magic(&buf).is_ok());
+    }
+
     #[test]
     fn magic_bytes_are_correct() {
         assert_eq!(JOURNAL_MAGIC, b"LPKSHHRH");
