@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 journald-core = { workspace = true }
 journald-binary = { workspace = true }
+serde = { workspace = true }
 
 [lints]
 workspace = true
