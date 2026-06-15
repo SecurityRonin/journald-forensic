@@ -2,7 +2,7 @@
 
 [![journald-core](https://img.shields.io/crates/v/journald-core.svg?label=journald-core)](https://crates.io/crates/journald-core)
 [![Docs.rs](https://img.shields.io/docsrs/journald-core)](https://docs.rs/journald-core)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Sponsor](https://img.shields.io/badge/sponsor-h4x0r-ea4aaa?logo=github-sponsors)](https://github.com/sponsors/h4x0r)
 
 **Read a systemd `.journal` file directly — no `journalctl`, no running systemd, no live host — and surface the sequence gaps, timestamp regressions, and truncation that say a log was tampered with.**
