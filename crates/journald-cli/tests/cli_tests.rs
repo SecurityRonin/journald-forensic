@@ -2,7 +2,7 @@ use assert_cmd::Command;
 use std::io::Write;
 
 fn jd() -> Command {
-    Command::cargo_bin("jd").unwrap()
+    Command::cargo_bin("jd4n6").unwrap()
 }
 
 #[test]
@@ -32,8 +32,7 @@ fn jd_search_help_exits_0() {
 
 #[test]
 fn jd_nonexistent_path_exits_nonzero() {
-    jd()
-        .args(["timeline", "/nonexistent/path/to/journal.journal"])
+    jd().args(["timeline", "/nonexistent/path/to/journal.journal"])
         .assert()
         .failure();
 }
@@ -45,8 +44,7 @@ fn jd_empty_file_exits_nonzero() {
     let mut f = std::fs::File::create(&path).unwrap();
     f.write_all(&[]).unwrap();
     drop(f);
-    jd()
-        .args(["timeline", path.to_str().unwrap()])
+    jd().args(["timeline", path.to_str().unwrap()])
         .assert()
         .failure();
 }

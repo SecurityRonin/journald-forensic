@@ -5,7 +5,7 @@ members = [
     "crates/journald-binary",
     "crates/journald-integrity",
     "crates/journald-carver",
-    "crates/jd-cli",
+    "crates/journald-cli",
 ]
 
 [workspace.package]

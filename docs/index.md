@@ -7,18 +7,18 @@
 ## Timeline a journal in 30 seconds
 
 ```bash
-cargo install --git https://github.com/SecurityRonin/journald-forensic jd-cli
+cargo install --git https://github.com/SecurityRonin/journald-forensic journald-cli
 ```
 
 ```bash
 # Chronological timeline as JSONL — one entry per line, every field preserved
-jd timeline system.journal
+jd4n6 timeline system.journal
 
 # Every field name present across the file (know what you can pivot on)
-jd fields system.journal
+jd4n6 fields system.journal
 
 # Pull every entry matching a field filter
-jd search system.journal PRIORITY=3
+jd4n6 search system.journal PRIORITY=3
 ```
 
 ```jsonl
@@ -33,7 +33,7 @@ A reader stack plus an analyzer, in one workspace:
 - `journald-binary` — the on-disk reader: `parse_journal_magic`, `parse_header`, `parse_object_header`, and the eight `JournalObjectType`s
 - `journald-carver` — recovery: `scan_for_journal_magic` and `scan_for_entry_objects` carve journal structures from unallocated space and corrupt files
 - `journald-integrity` — the auditor: `detect_sequence_gaps` / `detect_timestamp_regressions` / `detect_truncation` / `detect_online_state` to `IntegrityIndicator`
-- `jd` (`jd-cli`) — the end-user CLI: `timeline`, `fields`, `search`
+- `jd4n6` (`journald-cli`) — the end-user CLI: `timeline`, `fields`, `search`
 
 ## Trust, but verify
 
