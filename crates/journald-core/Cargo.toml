@@ -1,6 +1,7 @@
 [package]
 name = "journald-core"
-description = "Core domain types for systemd journal (journald) forensic analysis"version = "0.1.0"
+description = "Core domain types for systemd journal (journald) forensic analysis"
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

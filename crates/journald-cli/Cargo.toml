@@ -1,6 +1,7 @@
 [package]
 name = "journald-cli"
-description = "jd4n6 - systemd journal (journald) forensic analysis CLI"version = "0.1.0"
+description = "jd4n6 - systemd journal (journald) forensic analysis CLI"
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
