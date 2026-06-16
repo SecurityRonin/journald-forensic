@@ -1,6 +1,6 @@
 [package]
 name = "journald-integrity"
-version = "0.1.0"
+description = "Tampering, sealing, and corruption detection for systemd journal files"version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
