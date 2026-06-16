@@ -20,7 +20,11 @@ use std::path::PathBuf;
 /// Parses binary `.journal` files for forensic examination: timeline extraction,
 /// field enumeration, and entry search.
 #[derive(Parser)]
-#[command(name = "jd", about = "systemd journal forensic analysis tool", version)]
+#[command(
+    name = "jd4n6",
+    about = "systemd journal forensic analysis tool",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Cmd,
@@ -66,8 +70,8 @@ fn main() {
 
 /// Read a journal file and validate its magic. Returns raw bytes.
 fn read_and_validate(path: &PathBuf) -> Result<Vec<u8>> {
-    let mut f = std::fs::File::open(path)
-        .with_context(|| format!("cannot open '{}'", path.display()))?;
+    let mut f =
+        std::fs::File::open(path).with_context(|| format!("cannot open '{}'", path.display()))?;
     let mut data = Vec::new();
     f.read_to_end(&mut data)
         .with_context(|| format!("cannot read '{}'", path.display()))?;
@@ -92,8 +96,7 @@ fn scan_entries(data: &[u8]) -> Vec<EntryRecord> {
     if data.len() < MIN_HEADER {
         return Vec::new();
     }
-    let raw_header_size =
-        u64::from_le_bytes(data[88..96].try_into().unwrap_or([0; 8])) as usize;
+    let raw_header_size = u64::from_le_bytes(data[88..96].try_into().unwrap_or([0; 8])) as usize;
     let arena_start = raw_header_size.max(240);
     if arena_start >= data.len() {
         return Vec::new();
@@ -126,8 +129,7 @@ fn scan_entries(data: &[u8]) -> Vec<EntryRecord> {
                 pos += size.max(8);
                 continue;
             }
-            let seqnum =
-                u64::from_le_bytes(data[pos + 16..pos + 24].try_into().unwrap_or([0; 8]));
+            let seqnum = u64::from_le_bytes(data[pos + 16..pos + 24].try_into().unwrap_or([0; 8]));
             let realtime =
                 u64::from_le_bytes(data[pos + 24..pos + 32].try_into().unwrap_or([0; 8]));
             let monotonic =

@@ -263,21 +263,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
-name = "jd-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "clap",
- "journald-binary",
- "journald-carver",
- "journald-core",
- "journald-integrity",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "journald-binary"
 version = "0.1.0"
 dependencies = [
@@ -293,6 +278,21 @@ dependencies = [
  "journald-binary",
  "journald-core",
  "serde",
+]
+
+[[package]]
+name = "journald-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "clap",
+ "journald-binary",
+ "journald-carver",
+ "journald-core",
+ "journald-integrity",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
