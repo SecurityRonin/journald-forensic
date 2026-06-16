@@ -1,6 +1,7 @@
 [package]
 name = "journald-binary"
-description = "Binary-format parser for systemd journal (.journal) files"version = "0.1.0"
+description = "Binary-format parser for systemd journal (.journal) files"
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
