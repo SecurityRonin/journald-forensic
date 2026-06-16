@@ -1,6 +1,6 @@
 [package]
 name = "journald-carver"
-version = "0.1.0"
+description = "Carve systemd journal entries via magic-byte scanning of unallocated or damaged journals"version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
