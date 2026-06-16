@@ -26,10 +26,10 @@ tempfile = "3"
 assert_cmd = "2"
 
 # Internal
-journald-core = { path = "crates/journald-core" }
-journald-binary = { path = "crates/journald-binary" }
-journald-integrity = { path = "crates/journald-integrity" }
-journald-carver = { path = "crates/journald-carver" }
+journald-core = { version = "0.1.0", path = "crates/journald-core" }
+journald-binary = { version = "0.1.0", path = "crates/journald-binary" }
+journald-integrity = { version = "0.1.0", path = "crates/journald-integrity" }
+journald-carver = { version = "0.1.0", path = "crates/journald-carver" }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
