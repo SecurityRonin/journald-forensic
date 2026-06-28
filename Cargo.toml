@@ -15,7 +15,7 @@ license = "Apache-2.0"
 repository = "https://github.com/SecurityRonin/journald-forensic"
 
 [workspace.dependencies]
-forensicnomicon = "0.3.1"
+forensicnomicon = "1"
 chrono = { version = "0.4", default-features = false, features = ["alloc", "serde"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
@@ -26,10 +26,10 @@ tempfile = "3"
 assert_cmd = "2"
 
 # Internal
-journald-core = { version = "0.1.0", path = "crates/journald-core" }
-journald-binary = { version = "0.1.0", path = "crates/journald-binary" }
-journald-integrity = { version = "0.1.0", path = "crates/journald-integrity" }
-journald-carver = { version = "0.1.0", path = "crates/journald-carver" }
+journald-core = { version = "0.2.0", path = "crates/journald-core" }
+journald-binary = { version = "0.2.0", path = "crates/journald-binary" }
+journald-integrity = { version = "0.2.0", path = "crates/journald-integrity" }
+journald-carver = { version = "0.2.0", path = "crates/journald-carver" }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
