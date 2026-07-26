@@ -133,7 +133,7 @@ mod tests {
     fn is_plausible_object_header_rejects_zero_size() {
         let mut buf = [0u8; 16];
         buf[0] = 3; // Entry
-        // size remains 0
+                    // size remains 0
         assert!(!is_plausible_object_header(&buf));
     }
 
@@ -156,11 +156,14 @@ mod tests {
         let mut buf = vec![0u8; 64];
         buf[32] = 3; // type = Entry
         buf[33] = 0; // flags
-        // reserved bytes 34..39 remain 0
+                     // reserved bytes 34..39 remain 0
         buf[40..48].copy_from_slice(&64u64.to_le_bytes()); // size = 64
         let entries = scan_for_entry_objects(&buf);
         assert!(!entries.is_empty());
-        let e = entries.iter().find(|e| e.offset == 32).expect("entry at offset 32");
+        let e = entries
+            .iter()
+            .find(|e| e.offset == 32)
+            .expect("entry at offset 32");
         assert_eq!(e.object_type, 3);
         assert_eq!(e.size, 64);
     }

@@ -271,7 +271,8 @@ mod tests {
     #[test]
     fn cursor_parse_roundtrip() {
         // All-zero UUIDs, seqnum=1, all others 0
-        let cursor_str = "s=00000000000000000000000000000000;i=1;b=00000000000000000000000000000000;m=0;t=0;x=0";
+        let cursor_str =
+            "s=00000000000000000000000000000000;i=1;b=00000000000000000000000000000000;m=0;t=0;x=0";
         let cursor = JournalCursor::parse(cursor_str).expect("parse should succeed");
         assert_eq!(cursor.seqnum, 1);
         assert_eq!(cursor.seqnum_id, [0u8; 16]);
@@ -300,7 +301,9 @@ mod tests {
 
     #[test]
     fn journal_error_invalid_magic_display() {
-        let err = JournalError::InvalidMagic { found: *b"BADMAGIC" };
+        let err = JournalError::InvalidMagic {
+            found: *b"BADMAGIC",
+        };
         let display = format!("{err}");
         assert!(display.contains("LPKSHHRH") || display.contains("invalid magic"));
     }

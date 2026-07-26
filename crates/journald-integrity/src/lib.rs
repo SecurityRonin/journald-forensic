@@ -141,7 +141,9 @@ mod tests {
         let seqnums = vec![1u64, 3, 7];
         let indicators = detect_sequence_gaps(&seqnums);
         assert_eq!(indicators.len(), 2);
-        assert!(indicators.iter().all(|i| i.kind == IntegrityKind::SequenceGap));
+        assert!(indicators
+            .iter()
+            .all(|i| i.kind == IntegrityKind::SequenceGap));
     }
 
     #[test]
@@ -153,7 +155,10 @@ mod tests {
         assert_eq!(indicators[0].seqnum_start, Some(2));
         assert_eq!(indicators[0].seqnum_end, Some(5));
         // description should mention the count
-        assert!(indicators[0].description.contains('2') || indicators[0].description.contains("deleted"));
+        assert!(
+            indicators[0].description.contains('2')
+                || indicators[0].description.contains("deleted")
+        );
     }
 
     #[test]

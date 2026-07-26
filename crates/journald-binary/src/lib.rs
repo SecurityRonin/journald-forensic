@@ -6,7 +6,9 @@ use journald_core::JournalError;
 
 // KNOWLEDGE constants live in forensicnomicon; re-export for downstream crates.
 pub use forensicnomicon::journald::JOURNAL_MAGIC;
-use forensicnomicon::journald::{header_offset, object_header_offset, object_type as nom_object_type};
+use forensicnomicon::journald::{
+    header_offset, object_header_offset, object_type as nom_object_type,
+};
 
 /// Journal file state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -57,7 +59,10 @@ pub struct ObjectHeader {
 /// Verify that `buf` begins with the journal magic bytes.
 pub fn parse_journal_magic(buf: &[u8]) -> Result<(), JournalError> {
     if buf.len() < 8 {
-        return Err(JournalError::BufferTooShort { needed: 8, got: buf.len() });
+        return Err(JournalError::BufferTooShort {
+            needed: 8,
+            got: buf.len(),
+        });
     }
     let found: [u8; 8] = buf[..8].try_into().unwrap();
     if &found != JOURNAL_MAGIC {
@@ -124,13 +129,23 @@ pub fn parse_header(buf: &[u8]) -> Result<JournalHeader, JournalError> {
     let off_n_entries = header_offset::N_ENTRIES;
     let n_entries = u64::from_le_bytes(buf[off_n_entries..off_n_entries + 8].try_into().unwrap());
     let off_tail_seqnum = header_offset::TAIL_ENTRY_SEQNUM;
-    let tail_entry_seqnum = u64::from_le_bytes(buf[off_tail_seqnum..off_tail_seqnum + 8].try_into().unwrap());
+    let tail_entry_seqnum = u64::from_le_bytes(
+        buf[off_tail_seqnum..off_tail_seqnum + 8]
+            .try_into()
+            .unwrap(),
+    );
     let off_head_seqnum = header_offset::HEAD_ENTRY_SEQNUM;
-    let head_entry_seqnum = u64::from_le_bytes(buf[off_head_seqnum..off_head_seqnum + 8].try_into().unwrap());
+    let head_entry_seqnum = u64::from_le_bytes(
+        buf[off_head_seqnum..off_head_seqnum + 8]
+            .try_into()
+            .unwrap(),
+    );
     let off_head_rt = header_offset::HEAD_ENTRY_REALTIME;
-    let head_entry_realtime = u64::from_le_bytes(buf[off_head_rt..off_head_rt + 8].try_into().unwrap());
+    let head_entry_realtime =
+        u64::from_le_bytes(buf[off_head_rt..off_head_rt + 8].try_into().unwrap());
     let off_tail_rt = header_offset::TAIL_ENTRY_REALTIME;
-    let tail_entry_realtime = u64::from_le_bytes(buf[off_tail_rt..off_tail_rt + 8].try_into().unwrap());
+    let tail_entry_realtime =
+        u64::from_le_bytes(buf[off_tail_rt..off_tail_rt + 8].try_into().unwrap());
 
     Ok(JournalHeader {
         compatible_flags,
@@ -166,7 +181,11 @@ pub fn parse_object_header(buf: &[u8]) -> Result<ObjectHeader, JournalError> {
     let flags = buf[object_header_offset::FLAGS];
     let sz = object_header_offset::SIZE;
     let size = u64::from_le_bytes(buf[sz..sz + 8].try_into().unwrap());
-    Ok(ObjectHeader { object_type, flags, size })
+    Ok(ObjectHeader {
+        object_type,
+        flags,
+        size,
+    })
 }
 
 /// Map a raw object type byte to `JournalObjectType`.
@@ -192,7 +211,7 @@ mod tests {
 
     #[test]
     fn binary_magic_matches_forensicnomicon_constant() {
-        use forensicnomicon::journald::{JOURNAL_MAGIC as NOM_MAGIC, object_type, header_offset};
+        use forensicnomicon::journald::{header_offset, object_type, JOURNAL_MAGIC as NOM_MAGIC};
         assert_eq!(NOM_MAGIC, b"LPKSHHRH");
         assert_eq!(object_type::ENTRY, 3);
         assert_eq!(header_offset::BOOT_ID, 56);
@@ -231,14 +250,38 @@ mod tests {
 
     #[test]
     fn object_type_from_byte_all_known_types() {
-        assert!(matches!(object_type_from_byte(0), Ok(JournalObjectType::Unused)));
-        assert!(matches!(object_type_from_byte(1), Ok(JournalObjectType::Data)));
-        assert!(matches!(object_type_from_byte(2), Ok(JournalObjectType::Field)));
-        assert!(matches!(object_type_from_byte(3), Ok(JournalObjectType::Entry)));
-        assert!(matches!(object_type_from_byte(4), Ok(JournalObjectType::DataHashTable)));
-        assert!(matches!(object_type_from_byte(5), Ok(JournalObjectType::FieldHashTable)));
-        assert!(matches!(object_type_from_byte(6), Ok(JournalObjectType::EntryArray)));
-        assert!(matches!(object_type_from_byte(7), Ok(JournalObjectType::Tag)));
+        assert!(matches!(
+            object_type_from_byte(0),
+            Ok(JournalObjectType::Unused)
+        ));
+        assert!(matches!(
+            object_type_from_byte(1),
+            Ok(JournalObjectType::Data)
+        ));
+        assert!(matches!(
+            object_type_from_byte(2),
+            Ok(JournalObjectType::Field)
+        ));
+        assert!(matches!(
+            object_type_from_byte(3),
+            Ok(JournalObjectType::Entry)
+        ));
+        assert!(matches!(
+            object_type_from_byte(4),
+            Ok(JournalObjectType::DataHashTable)
+        ));
+        assert!(matches!(
+            object_type_from_byte(5),
+            Ok(JournalObjectType::FieldHashTable)
+        ));
+        assert!(matches!(
+            object_type_from_byte(6),
+            Ok(JournalObjectType::EntryArray)
+        ));
+        assert!(matches!(
+            object_type_from_byte(7),
+            Ok(JournalObjectType::Tag)
+        ));
     }
 
     #[test]
@@ -252,8 +295,8 @@ mod tests {
         let mut buf = [0u8; 16];
         buf[0] = 3; // Entry type
         buf[1] = 0; // flags = no compression
-        // bytes 2-7: reserved (zero)
-        // bytes 8-15: size = 128 as little-endian u64
+                    // bytes 2-7: reserved (zero)
+                    // bytes 8-15: size = 128 as little-endian u64
         buf[8..16].copy_from_slice(&128u64.to_le_bytes());
         let hdr = parse_object_header(&buf).unwrap();
         assert!(matches!(hdr.object_type, JournalObjectType::Entry));
