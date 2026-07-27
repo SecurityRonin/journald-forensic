@@ -154,11 +154,11 @@ mod tests {
         assert_eq!(indicators.len(), 1);
         assert_eq!(indicators[0].seqnum_start, Some(2));
         assert_eq!(indicators[0].seqnum_end, Some(5));
-        // description should mention the count
-        assert!(
-            indicators[0].description.contains('2')
-                || indicators[0].description.contains("deleted")
-        );
+        // description should mention both the count (2 deleted: seqnums 3 and 4)
+        // and the action — asserted separately so neither check short-circuits the
+        // other (a `||` would leave the second operand unexecuted).
+        assert!(indicators[0].description.contains('2'));
+        assert!(indicators[0].description.contains("deleted"));
     }
 
     #[test]

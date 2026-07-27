@@ -309,4 +309,70 @@ mod tests {
         let buf = [0u8; 8];
         assert!(parse_object_header(&buf).is_err());
     }
+
+    // --- parse_header against a REAL journal header (Tier-1) ---
+    //
+    // The fixture is a real systemd-239 journal; its header fields were confirmed
+    // with the independent `journalctl --header` oracle (see tests/data/README.md).
+    // We assert only the fields whose forensicnomicon offsets are byte-verified
+    // against that oracle: magic, flags, state, and the three 128-bit IDs. (The
+    // higher numeric fields — n_objects/n_entries/seqnums/realtimes — are read at
+    // forensicnomicon offsets that do not match the systemd layout for this
+    // version; asserting their current output would bless wrong values, so they
+    // are exercised for coverage but not asserted here.)
+    const REAL_JOURNAL: &[u8] = include_bytes!("../../../tests/data/classic-system.journal");
+
+    fn hex16(bytes: &[u8; 16]) -> String {
+        use std::fmt::Write as _;
+        bytes.iter().fold(String::with_capacity(32), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
+    }
+
+    #[test]
+    fn parse_header_reads_real_journal_header() {
+        let hdr = parse_header(REAL_JOURNAL).expect("real journal header must parse");
+        assert_eq!(hdr.state, JournalState::Offline);
+        assert_eq!(hdr.compatible_flags, 0);
+        assert_eq!(hdr.incompatible_flags, 0); // classic format: no COMPACT/KEYED_HASH
+        assert_eq!(hex16(&hdr.machine_id), "e7d87b83baf96ba14eb77adc0a769ed2");
+        assert_eq!(hex16(&hdr.boot_id), "e00a23d431394d0ca22d6e3ebc10dd74");
+        assert_eq!(hex16(&hdr.seqnum_id), "799abeca5ffa46fcb51552ab9afb90cc");
+    }
+
+    #[test]
+    fn parse_header_too_short_returns_err() {
+        // < MIN_HEADER_SIZE (224) → BufferTooShort, before any field read.
+        let buf = [0u8; 100];
+        assert!(matches!(
+            parse_header(&buf),
+            Err(JournalError::BufferTooShort { .. })
+        ));
+    }
+
+    #[test]
+    fn parse_header_state_byte_maps_all_arms() {
+        // Take the real header and flip only the state byte to exercise each arm.
+        let mut buf = REAL_JOURNAL[..256].to_vec();
+        buf[forensicnomicon::journald::header_offset::STATE] = 0;
+        assert_eq!(parse_header(&buf).unwrap().state, JournalState::Offline);
+        buf[forensicnomicon::journald::header_offset::STATE] = 2;
+        assert_eq!(parse_header(&buf).unwrap().state, JournalState::Archived);
+        buf[forensicnomicon::journald::header_offset::STATE] = 1;
+        assert_eq!(parse_header(&buf).unwrap().state, JournalState::Online);
+        // Unknown state byte is treated as Online (suspicious).
+        buf[forensicnomicon::journald::header_offset::STATE] = 99;
+        assert_eq!(parse_header(&buf).unwrap().state, JournalState::Online);
+    }
+
+    #[test]
+    fn parse_header_bad_magic_returns_err() {
+        let mut buf = REAL_JOURNAL[..256].to_vec();
+        buf[..8].copy_from_slice(b"NOTAJRNL");
+        assert!(matches!(
+            parse_header(&buf),
+            Err(JournalError::InvalidMagic { .. })
+        ));
+    }
 }
