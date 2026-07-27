@@ -126,7 +126,7 @@ fn scan_entries(data: &[u8]) -> Vec<EntryRecord> {
             //   +56  xor_hash u64
             //   +64  items[]  (offset u64, hash u64) * N
             if pos + 64 > data.len() {
-                pos += size.max(8);
+                pos += align8(size);
                 continue;
             }
             let seqnum = u64::from_le_bytes(data[pos + 16..pos + 24].try_into().unwrap_or([0; 8]));
@@ -172,9 +172,20 @@ fn scan_entries(data: &[u8]) -> Vec<EntryRecord> {
             entries.push((seqnum, realtime, monotonic, fields));
         }
 
-        pos += size.max(8);
+        pos += align8(size);
     }
     entries
+}
+
+/// Round `size` up to the next 8-byte boundary, with a minimum step of 8.
+///
+/// Journal objects are 64-bit aligned: the next object begins at
+/// `ALIGN64(offset + size)`, not `offset + size`. Advancing by the raw size
+/// derails the sequential walk at the first object whose size is not a multiple
+/// of 8 (e.g. a Data object carrying a short "KEY=value" payload), so alignment
+/// is mandatory to walk a real journal arena.
+fn align8(size: usize) -> usize {
+    ((size + 7) & !7).max(8)
 }
 
 fn cmd_timeline(path: &PathBuf) -> Result<()> {

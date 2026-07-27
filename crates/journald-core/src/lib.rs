@@ -271,7 +271,8 @@ mod tests {
     #[test]
     fn cursor_parse_roundtrip() {
         // All-zero UUIDs, seqnum=1, all others 0
-        let cursor_str = "s=00000000000000000000000000000000;i=1;b=00000000000000000000000000000000;m=0;t=0;x=0";
+        let cursor_str =
+            "s=00000000000000000000000000000000;i=1;b=00000000000000000000000000000000;m=0;t=0;x=0";
         let cursor = JournalCursor::parse(cursor_str).expect("parse should succeed");
         assert_eq!(cursor.seqnum, 1);
         assert_eq!(cursor.seqnum_id, [0u8; 16]);
@@ -291,16 +292,79 @@ mod tests {
 
     #[test]
     fn journal_field_value_text_accessible() {
-        let val = JournalFieldValue::Text("hello".to_string());
-        match val {
-            JournalFieldValue::Text(s) => assert_eq!(s, "hello"),
-            JournalFieldValue::Binary(_) => panic!("expected Text"),
-        }
+        let text = JournalFieldValue::Text("hello".to_string());
+        assert!(matches!(&text, JournalFieldValue::Text(s) if s == "hello"));
+        let binary = JournalFieldValue::Binary(vec![0xDE, 0xAD]);
+        assert!(matches!(&binary, JournalFieldValue::Binary(b) if b == &[0xDE, 0xAD]));
+    }
+
+    #[test]
+    fn field_lookup_of_binary_value_returns_none() {
+        // field() returns Some only for Text; a Binary value under the key yields None.
+        let entry = JournalEntry {
+            seqnum: 1,
+            realtime_us: 0,
+            monotonic_us: 0,
+            boot_id: [0u8; 16],
+            fields: vec![JournalField {
+                key: "COREDUMP".to_string(),
+                value: JournalFieldValue::Binary(vec![1, 2, 3]),
+            }],
+        };
+        assert_eq!(entry.field("COREDUMP"), None);
+    }
+
+    #[test]
+    fn syslog_identifier_convenience() {
+        let entry = make_entry_with_fields(vec![("SYSLOG_IDENTIFIER", "sshd")]);
+        assert_eq!(entry.syslog_identifier(), Some("sshd"));
+        let empty = make_entry_with_fields(vec![]);
+        assert_eq!(empty.syslog_identifier(), None);
+    }
+
+    #[test]
+    fn cursor_parse_accepts_lower_and_upper_hex_uuids() {
+        // seqnum_id uses lowercase a-f, boot_id uses uppercase A-F — both are valid
+        // hex nibbles and must parse to identical bytes.
+        let cursor_str = "s=0123456789abcdef0123456789abcdef;i=1;\
+                          b=0123456789ABCDEF0123456789ABCDEF;m=0;t=0;x=0";
+        let cursor = JournalCursor::parse(cursor_str).expect("mixed-case hex must parse");
+        assert_eq!(cursor.seqnum_id, cursor.boot_id);
+        assert_eq!(cursor.seqnum_id[0], 0x01);
+        assert_eq!(cursor.seqnum_id[15], 0xef);
+    }
+
+    #[test]
+    fn cursor_parse_unknown_key_returns_err() {
+        // A recognised FIELD=VALUE shape but an unknown key ('z') hits the match's
+        // catch-all Err arm.
+        let result = JournalCursor::parse("z=deadbeef");
+        assert!(matches!(result, Err(JournalError::InvalidCursor { .. })));
+    }
+
+    #[test]
+    fn cursor_parse_uuid_wrong_length_returns_err() {
+        // A 4-char UUID hex (len != 32) fails parse_uuid_hex's length guard.
+        let result =
+            JournalCursor::parse("s=abcd;i=1;b=00000000000000000000000000000000;m=0;t=0;x=0");
+        assert!(matches!(result, Err(JournalError::InvalidCursor { .. })));
+    }
+
+    #[test]
+    fn cursor_parse_uuid_non_hex_char_returns_err() {
+        // A 32-char UUID with a non-hex char ('g') fails hex_nibble's catch-all.
+        let result = JournalCursor::parse(
+            "s=0000000000000000000000000000000g;i=1;\
+             b=00000000000000000000000000000000;m=0;t=0;x=0",
+        );
+        assert!(matches!(result, Err(JournalError::InvalidCursor { .. })));
     }
 
     #[test]
     fn journal_error_invalid_magic_display() {
-        let err = JournalError::InvalidMagic { found: *b"BADMAGIC" };
+        let err = JournalError::InvalidMagic {
+            found: *b"BADMAGIC",
+        };
         let display = format!("{err}");
         assert!(display.contains("LPKSHHRH") || display.contains("invalid magic"));
     }
