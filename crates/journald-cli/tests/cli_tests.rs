@@ -171,7 +171,7 @@ fn jd_wrong_magic_exits_nonzero() {
 
 #[test]
 fn jd_valid_magic_but_below_min_header_reports_no_entries() {
-    // Valid magic but shorter than MIN_HEADER (96) → scan_entries returns empty,
+    // Valid magic but shorter than MIN_HEADER (96) → parse_entries returns empty,
     // exercising the len < MIN_HEADER early-return and the "no entries" branch.
     let mut buf = MAGIC.to_vec();
     buf.extend_from_slice(&[0u8; 80]); // total 88 bytes < 96
@@ -202,12 +202,12 @@ fn jd_valid_magic_huge_header_size_reports_no_entries() {
 }
 
 // --- Malformed-arena robustness (attacker-crafted journals) ---
-// These drive scan_entries' defensive recovery arms. The reader must never panic
+// These drive parse_entries' defensive recovery arms. The reader must never panic
 // and must degrade to "no entries" rather than crash or produce garbage. The bytes
 // are constructed here (committed with the test), so the gate needs no external
 // file. Layout constants mirror the systemd on-disk object header (type@0, size@8).
 
-/// 240-byte header: magic + `header_size`=240 so the `scan_entries` arena starts at 240.
+/// 240-byte header: magic + `header_size`=240 so the `parse_entries` arena starts at 240.
 fn base_header() -> Vec<u8> {
     let mut h = vec![0u8; 240];
     h[..8].copy_from_slice(MAGIC);
@@ -226,7 +226,7 @@ fn obj_header(ty: u8, size: u64) -> [u8; 16] {
 #[test]
 fn jd_arena_with_unknown_object_type_does_not_crash() {
     // An object whose type byte is out of range (99 > 7) makes parse_object_header
-    // fail; scan_entries must step forward 8 bytes and keep walking, not abort.
+    // fail; parse_entries must step forward 8 bytes and keep walking, not abort.
     let mut buf = base_header();
     buf.extend_from_slice(&obj_header(99, 32)); // bad type at offset 240
     let (_dir, path) = temp_file("badtype.journal", &buf);

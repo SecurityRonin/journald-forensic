@@ -2,7 +2,7 @@
 //!
 //! All functions accept `&[u8]` slices — no file I/O.
 
-use journald_core::JournalError;
+use journald_core::{JournalEntry, JournalError, JournalField, JournalFieldValue};
 
 // KNOWLEDGE constants live in forensicnomicon; re-export for downstream crates.
 pub use forensicnomicon::journald::JOURNAL_MAGIC;
@@ -209,10 +209,118 @@ pub fn object_type_from_byte(b: u8) -> Result<JournalObjectType, JournalError> {
 /// yields every `Entry` object with its resolved `KEY=value` fields. This is the
 /// public library seam behind the CLI's timeline/fields/search commands.
 ///
-/// STUB — not yet implemented (RED).
-#[allow(unused_variables)]
-pub fn parse_entries(data: &[u8]) -> Vec<journald_core::JournalEntry> {
-    Vec::new()
+/// It does not follow hash-table chains — it walks the arena sequentially from
+/// after the header, resolving each entry item's referenced `Data` object. The
+/// walk is panic-free on arbitrary/untrusted input: every field read is bounds-
+/// checked and out-of-range integer reads default to zero.
+#[allow(clippy::cast_possible_truncation)]
+pub fn parse_entries(data: &[u8]) -> Vec<JournalEntry> {
+    // The journal header is at offset 0; header_size is at offset 88..96 (LE u64).
+    const MIN_HEADER: usize = 96;
+    if data.len() < MIN_HEADER {
+        return Vec::new();
+    }
+    let raw_header_size = u64::from_le_bytes(data[88..96].try_into().unwrap_or([0; 8])) as usize;
+    let arena_start = raw_header_size.max(240);
+    if arena_start >= data.len() {
+        return Vec::new();
+    }
+
+    let mut entries = Vec::new();
+    let mut pos = arena_start;
+
+    while pos + 16 <= data.len() {
+        let buf = &data[pos..];
+        let Ok(obj) = parse_object_header(buf) else {
+            pos += 8;
+            continue;
+        };
+        let size = obj.size as usize;
+        if size < 16 {
+            pos += 8;
+            continue;
+        }
+
+        if obj.object_type == JournalObjectType::Entry {
+            // Entry object layout (after the 16-byte object header):
+            //   +16  seqnum   u64
+            //   +24  realtime u64
+            //   +32  monotonic u64
+            //   +40  boot_id  [u8; 16]
+            //   +56  xor_hash u64
+            //   +64  items[]  (offset u64, hash u64) * N
+            if pos + 64 > data.len() {
+                pos += align8(size);
+                continue;
+            }
+            let seqnum = u64::from_le_bytes(data[pos + 16..pos + 24].try_into().unwrap_or([0; 8]));
+            let realtime_us =
+                u64::from_le_bytes(data[pos + 24..pos + 32].try_into().unwrap_or([0; 8]));
+            let monotonic_us =
+                u64::from_le_bytes(data[pos + 32..pos + 40].try_into().unwrap_or([0; 8]));
+            let boot_id: [u8; 16] = data[pos + 40..pos + 56].try_into().unwrap_or([0; 16]);
+
+            let items_start = pos + 64;
+            let obj_end = (pos + size).min(data.len());
+            let mut fields = Vec::new();
+
+            let mut item_pos = items_start;
+            while item_pos + 16 <= obj_end {
+                let data_offset =
+                    u64::from_le_bytes(data[item_pos..item_pos + 8].try_into().unwrap_or([0; 8]))
+                        as usize;
+                item_pos += 16;
+
+                if data_offset + 16 > data.len() {
+                    continue;
+                }
+                let Ok(data_obj) = parse_object_header(&data[data_offset..]) else {
+                    continue;
+                };
+                if data_obj.object_type != JournalObjectType::Data {
+                    continue;
+                }
+                // Data object payload starts at +64 within the Data object.
+                let payload_start = data_offset + 64;
+                let payload_end = (data_offset + data_obj.size as usize).min(data.len());
+                if payload_start >= payload_end {
+                    continue;
+                }
+                let payload = &data[payload_start..payload_end];
+                // payload is "KEY=value" in bytes.
+                if let Some(eq_pos) = payload.iter().position(|&b| b == b'=') {
+                    let key = String::from_utf8_lossy(&payload[..eq_pos]).into_owned();
+                    let raw = &payload[eq_pos + 1..];
+                    let value = match std::str::from_utf8(raw) {
+                        Ok(s) => JournalFieldValue::Text(s.to_owned()),
+                        Err(_) => JournalFieldValue::Binary(raw.to_vec()),
+                    };
+                    fields.push(JournalField { key, value });
+                }
+            }
+            entries.push(JournalEntry {
+                seqnum,
+                realtime_us,
+                monotonic_us,
+                boot_id,
+                fields,
+            });
+        }
+
+        pos += align8(size);
+    }
+    entries
+}
+
+/// Round `size` up to the next 8-byte boundary, with a minimum step of 8.
+///
+/// Journal objects are 64-bit aligned: the next object begins at
+/// `ALIGN64(offset + size)`, not `offset + size`. Advancing by the raw size
+/// derails the sequential walk at the first object whose size is not a multiple
+/// of 8 (e.g. a Data object carrying a short "KEY=value" payload), so alignment
+/// is mandatory to walk a real journal arena.
+fn align8(size: usize) -> usize {
+    ((size + 7) & !7).max(8)
 }
 
 #[cfg(test)]
@@ -394,7 +502,7 @@ mod tests {
     /// object carrying `MESSAGE=hello`, and one `Entry` object referencing it.
     ///
     /// Layout mirrors the systemd journal on-disk format the walker expects:
-    /// header_size=240 (arena starts at 240), objects 8-byte aligned, Data
+    /// `header_size=240` (arena starts at 240), objects 8-byte aligned, `Data`
     /// payload at Data+64, Entry fields at Entry+16, item array at Entry+64.
     fn build_minimal_journal() -> Vec<u8> {
         let mut buf = vec![0u8; 408];
@@ -433,5 +541,118 @@ mod tests {
         assert_eq!(e.monotonic_us, 5);
         assert_eq!(e.boot_id, [0xAB; 16]);
         assert_eq!(e.field("MESSAGE"), Some("hello"));
+    }
+
+    /// Build a 512-byte journal with one `Data` object (payload at 304, declared
+    /// `data_size`) and one `Entry` at 320 whose single item points at
+    /// `item_offset`. Lets each edge test drive one defensive branch of the walk.
+    fn build_journal(payload: &[u8], data_size: u64, item_offset: u64) -> Vec<u8> {
+        let mut buf = vec![0u8; 512];
+        buf[..8].copy_from_slice(b"LPKSHHRH");
+        buf[88..96].copy_from_slice(&240u64.to_le_bytes());
+        let data_off = 240usize;
+        buf[data_off] = 1; // Data
+        buf[data_off + 8..data_off + 16].copy_from_slice(&data_size.to_le_bytes());
+        if !payload.is_empty() {
+            buf[data_off + 64..data_off + 64 + payload.len()].copy_from_slice(payload);
+        }
+        let entry_off = 320usize;
+        buf[entry_off] = 3; // Entry
+        buf[entry_off + 8..entry_off + 16].copy_from_slice(&80u64.to_le_bytes());
+        buf[entry_off + 16..entry_off + 24].copy_from_slice(&1u64.to_le_bytes());
+        buf[entry_off + 64..entry_off + 72].copy_from_slice(&item_offset.to_le_bytes());
+        buf
+    }
+
+    #[test]
+    fn parse_entries_empty_and_short_return_empty() {
+        assert!(parse_entries(&[]).is_empty());
+        assert!(parse_entries(&[0u8; 10]).is_empty());
+    }
+
+    #[test]
+    fn parse_entries_arena_start_beyond_data_returns_empty() {
+        let mut buf = vec![0u8; 100];
+        buf[..8].copy_from_slice(b"LPKSHHRH");
+        buf[88..96].copy_from_slice(&1000u64.to_le_bytes()); // header_size > len
+        assert!(parse_entries(&buf).is_empty());
+    }
+
+    #[test]
+    fn parse_entries_skips_unparseable_and_undersized_objects() {
+        // At the arena start, an invalid type byte (unparseable) then a run of
+        // zero bytes (Unused objects with size 0 < 16). No Entry is produced.
+        let mut buf = vec![0u8; 300];
+        buf[..8].copy_from_slice(b"LPKSHHRH");
+        buf[88..96].copy_from_slice(&240u64.to_le_bytes());
+        buf[240] = 99; // invalid object type
+        assert!(parse_entries(&buf).is_empty());
+    }
+
+    #[test]
+    fn parse_entries_entry_truncated_before_items() {
+        // Entry header is present but the buffer ends before the +64 item array.
+        let mut buf = vec![0u8; 260];
+        buf[..8].copy_from_slice(b"LPKSHHRH");
+        buf[88..96].copy_from_slice(&240u64.to_le_bytes());
+        buf[240] = 3; // Entry
+        buf[248..256].copy_from_slice(&80u64.to_le_bytes()); // size
+        assert!(parse_entries(&buf).is_empty());
+    }
+
+    #[test]
+    fn parse_entries_item_offset_out_of_bounds_yields_no_fields() {
+        let buf = build_journal(b"K=v", 67, 100_000);
+        let entries = parse_entries(&buf);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].fields.is_empty());
+    }
+
+    #[test]
+    fn parse_entries_item_points_to_unparseable_object() {
+        // Item points at offset 304 (inside the Data object's region, which the
+        // arena walk jumps over via the Data size) carrying an invalid type byte,
+        // so item resolution fails parse_object_header without derailing the walk.
+        let mut buf = build_journal(b"", 67, 304);
+        buf[304] = 99;
+        let entries = parse_entries(&buf);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].fields.is_empty());
+    }
+
+    #[test]
+    fn parse_entries_item_points_to_non_data_object() {
+        // Item points at the Entry object itself (type 3, not Data).
+        let buf = build_journal(b"K=v", 67, 320);
+        let entries = parse_entries(&buf);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].fields.is_empty());
+    }
+
+    #[test]
+    fn parse_entries_empty_data_payload_yields_no_fields() {
+        // data_size == 64 → payload_start == payload_end (no payload region).
+        let buf = build_journal(b"", 64, 240);
+        let entries = parse_entries(&buf);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].fields.is_empty());
+    }
+
+    #[test]
+    fn parse_entries_non_utf8_value_becomes_binary() {
+        let buf = build_journal(b"BIN=\xff\xfe", 70, 240);
+        let entries = parse_entries(&buf);
+        assert_eq!(entries.len(), 1);
+        let f = &entries[0].fields[0];
+        assert_eq!(f.key, "BIN");
+        assert!(matches!(&f.value, JournalFieldValue::Binary(b) if b == &[0xff, 0xfe]));
+    }
+
+    #[test]
+    fn parse_entries_payload_without_equals_is_skipped() {
+        let buf = build_journal(b"NOEQUALS", 72, 240);
+        let entries = parse_entries(&buf);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].fields.is_empty());
     }
 }
