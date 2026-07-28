@@ -327,6 +327,31 @@ fn align8(size: usize) -> usize {
 mod tests {
     use super::*;
 
+    // --- Regression: parse_entries must be panic-free on untrusted/oversized objects
+    //     (caught by adversarial review of the parse_entries seam). ---
+
+    #[test]
+    fn align8_never_overflows_on_untrusted_size() {
+        // A journal object may declare size = u64::MAX; align8's `size + 7` must
+        // saturate, not overflow (debug panic / release silent-wrap).
+        let _ = align8(usize::MAX);
+        let _ = align8(usize::MAX - 1);
+    }
+
+    #[test]
+    fn parse_entries_no_panic_on_oversized_object() {
+        // Minimal arena: a Data object (type byte 1) at offset 240 declaring
+        // size = u64::MAX. The unchecked `pos += align8(size)` / `pos + size`
+        // math previously overflowed usize and panicked. Must return, not panic.
+        let mut buf = vec![0u8; 260];
+        // header_size @ [88..96] = 0 -> arena_start = max(0, 240) = 240
+        buf[240] = 1; // DATA
+        for b in &mut buf[248..256] {
+            *b = 0xFF; // size = u64::MAX
+        }
+        let _ = parse_entries(&buf);
+    }
+
     // --- forensicnomicon integration tests (RED: forensicnomicon dep not yet wired) ---
 
     #[test]
