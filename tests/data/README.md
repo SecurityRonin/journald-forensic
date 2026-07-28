@@ -41,3 +41,31 @@ duplicate).
 The remaining coverage fixtures (empty file, wrong magic, truncated / huge
 header_size buffers) are constructed byte-exact inside the test sources, so the
 coverage gate is satisfiable from committed bytes alone.
+
+## Minting additional oracle corpora — `scripts/mint-journal.sh`
+
+- **Classification:** REAL-self (minted on a real systemd host; ground truth
+  documented, not inferred).
+- **Generator (verbatim):** `scripts/mint-journal.sh [OUTPUT_PATH]` — run on a
+  Linux/systemd host. It logs a KNOWN event set (`logger -t jd4n6-mint` at
+  priorities info=6 and err=3, plus a `systemd-cat` marker), runs
+  `journalctl --sync && --flush`, copies
+  `/var/log/journal/<machine-id>/system.journal` to `OUTPUT_PATH`, and writes
+  `OUTPUT_PATH.truth.txt` (md5/sha256, incompatible-flags, `journalctl` entry
+  count, and the exact messages logged). For a **classic-format** file the reader
+  can parse end-to-end, run it inside a systemd-239 container (recipe in the
+  script header) — the same provenance as `classic-system.journal` above.
+- **Not committed by default:** minted journals are operator-produced and
+  environment-specific; they are consumed via the env-gated oracle test
+  (`JOURNALD_TEST_CORPUS=<path> cargo test -p journald-binary --test
+  journalctl_oracle`), not committed to git. Record any journal you *do* commit
+  here with its `.truth.txt` values and this catalog's fields.
+
+## Deliberately NOT committed: systemd fuzz seeds
+
+systemd ships journal fuzz/seed corpora, but systemd is **LGPL-2.1-or-later**;
+committing those binaries into this **Apache-2.0** repo would attach copyleft to
+part of the tree. Malformed-input hardening therefore uses **synthetic in-source
+buffers** (`crates/journald-binary/tests/malformed_input.rs`) plus the
+`fuzz_parse_entries` cargo-fuzz target's generated corpus — no LGPL seeds. See
+`docs/validation.md`.
