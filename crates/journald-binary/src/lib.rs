@@ -203,6 +203,18 @@ pub fn object_type_from_byte(b: u8) -> Result<JournalObjectType, JournalError> {
     }
 }
 
+/// Decode the journal arena into a stream of [`journald_core::JournalEntry`] values.
+///
+/// Best-effort sequential walk of the object arena (from after the header) that
+/// yields every `Entry` object with its resolved `KEY=value` fields. This is the
+/// public library seam behind the CLI's timeline/fields/search commands.
+///
+/// STUB — not yet implemented (RED).
+#[allow(unused_variables)]
+pub fn parse_entries(data: &[u8]) -> Vec<journald_core::JournalEntry> {
+    Vec::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,5 +386,52 @@ mod tests {
             parse_header(&buf),
             Err(JournalError::InvalidMagic { .. })
         ));
+    }
+
+    // --- parse_entries: the public arena-walk seam ---
+
+    /// Build a minimal in-memory `.journal` byte buffer: a header, one `Data`
+    /// object carrying `MESSAGE=hello`, and one `Entry` object referencing it.
+    ///
+    /// Layout mirrors the systemd journal on-disk format the walker expects:
+    /// header_size=240 (arena starts at 240), objects 8-byte aligned, Data
+    /// payload at Data+64, Entry fields at Entry+16, item array at Entry+64.
+    fn build_minimal_journal() -> Vec<u8> {
+        let mut buf = vec![0u8; 408];
+        buf[..8].copy_from_slice(b"LPKSHHRH");
+        // header_size (u64 LE) at 88..96 → arena begins at 240.
+        buf[88..96].copy_from_slice(&240u64.to_le_bytes());
+
+        // Data object at offset 240: type=Data(1), size = 64 (obj header) + 13 payload = 77.
+        let data_off = 240usize;
+        buf[data_off] = 1;
+        buf[data_off + 8..data_off + 16].copy_from_slice(&77u64.to_le_bytes());
+        let payload = b"MESSAGE=hello";
+        buf[data_off + 64..data_off + 64 + payload.len()].copy_from_slice(payload);
+
+        // Entry object at offset 320 (ALIGN64(240+77)=320): type=Entry(3), size=80.
+        let entry_off = 320usize;
+        buf[entry_off] = 3;
+        buf[entry_off + 8..entry_off + 16].copy_from_slice(&80u64.to_le_bytes());
+        buf[entry_off + 16..entry_off + 24].copy_from_slice(&1u64.to_le_bytes()); // seqnum
+        buf[entry_off + 24..entry_off + 32].copy_from_slice(&1_000_000u64.to_le_bytes()); // realtime_us
+        buf[entry_off + 32..entry_off + 40].copy_from_slice(&5u64.to_le_bytes()); // monotonic_us
+        buf[entry_off + 40..entry_off + 56].copy_from_slice(&[0xAB; 16]); // boot_id
+                                                                          // xor_hash at +56 stays 0; item[0] at +64: data_offset=240, hash=0.
+        buf[entry_off + 64..entry_off + 72].copy_from_slice(&(data_off as u64).to_le_bytes());
+        buf
+    }
+
+    #[test]
+    fn parse_entries_decodes_minimal_journal() {
+        let buf = build_minimal_journal();
+        let entries = parse_entries(&buf);
+        assert_eq!(entries.len(), 1, "expected exactly one decoded Entry");
+        let e = &entries[0];
+        assert_eq!(e.seqnum, 1);
+        assert_eq!(e.realtime_us, 1_000_000);
+        assert_eq!(e.monotonic_us, 5);
+        assert_eq!(e.boot_id, [0xAB; 16]);
+        assert_eq!(e.field("MESSAGE"), Some("hello"));
     }
 }
