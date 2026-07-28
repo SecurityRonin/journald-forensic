@@ -229,7 +229,7 @@ pub fn parse_entries(data: &[u8]) -> Vec<JournalEntry> {
     let mut entries = Vec::new();
     let mut pos = arena_start;
 
-    while pos + 16 <= data.len() {
+    while pos.saturating_add(16) <= data.len() {
         let buf = &data[pos..];
         let Ok(obj) = parse_object_header(buf) else {
             pos += 8;
@@ -249,8 +249,8 @@ pub fn parse_entries(data: &[u8]) -> Vec<JournalEntry> {
             //   +40  boot_id  [u8; 16]
             //   +56  xor_hash u64
             //   +64  items[]  (offset u64, hash u64) * N
-            if pos + 64 > data.len() {
-                pos += align8(size);
+            if pos.saturating_add(64) > data.len() {
+                pos = pos.saturating_add(align8(size));
                 continue;
             }
             let seqnum = u64::from_le_bytes(data[pos + 16..pos + 24].try_into().unwrap_or([0; 8]));
@@ -260,18 +260,18 @@ pub fn parse_entries(data: &[u8]) -> Vec<JournalEntry> {
                 u64::from_le_bytes(data[pos + 32..pos + 40].try_into().unwrap_or([0; 8]));
             let boot_id: [u8; 16] = data[pos + 40..pos + 56].try_into().unwrap_or([0; 16]);
 
-            let items_start = pos + 64;
-            let obj_end = (pos + size).min(data.len());
+            let items_start = pos.saturating_add(64);
+            let obj_end = pos.saturating_add(size).min(data.len());
             let mut fields = Vec::new();
 
             let mut item_pos = items_start;
-            while item_pos + 16 <= obj_end {
+            while item_pos.saturating_add(16) <= obj_end {
                 let data_offset =
                     u64::from_le_bytes(data[item_pos..item_pos + 8].try_into().unwrap_or([0; 8]))
                         as usize;
                 item_pos += 16;
 
-                if data_offset + 16 > data.len() {
+                if data_offset.saturating_add(16) > data.len() {
                     continue;
                 }
                 let Ok(data_obj) = parse_object_header(&data[data_offset..]) else {
@@ -281,8 +281,10 @@ pub fn parse_entries(data: &[u8]) -> Vec<JournalEntry> {
                     continue;
                 }
                 // Data object payload starts at +64 within the Data object.
-                let payload_start = data_offset + 64;
-                let payload_end = (data_offset + data_obj.size as usize).min(data.len());
+                let payload_start = data_offset.saturating_add(64);
+                let payload_end = data_offset
+                    .saturating_add(data_obj.size as usize)
+                    .min(data.len());
                 if payload_start >= payload_end {
                     continue;
                 }
@@ -307,7 +309,7 @@ pub fn parse_entries(data: &[u8]) -> Vec<JournalEntry> {
             });
         }
 
-        pos += align8(size);
+        pos = pos.saturating_add(align8(size));
     }
     entries
 }
@@ -320,7 +322,7 @@ pub fn parse_entries(data: &[u8]) -> Vec<JournalEntry> {
 /// of 8 (e.g. a Data object carrying a short "KEY=value" payload), so alignment
 /// is mandatory to walk a real journal arena.
 fn align8(size: usize) -> usize {
-    ((size + 7) & !7).max(8)
+    ((size.saturating_add(7)) & !7).max(8)
 }
 
 #[cfg(test)]
