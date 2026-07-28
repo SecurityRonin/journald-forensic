@@ -27,21 +27,52 @@ type FieldMap = BTreeMap<String, String>;
 
 /// Project a crate [`JournalEntry`] to its text fields (binary fields dropped,
 /// matching how `journalctl -o json` renders only decodable strings).
-fn entry_to_text_map(_entry: &JournalEntry) -> FieldMap {
-    BTreeMap::new() // RED stub
+fn entry_to_text_map(entry: &JournalEntry) -> FieldMap {
+    let mut m = BTreeMap::new();
+    for f in &entry.fields {
+        if let JournalFieldValue::Text(s) = &f.value {
+            // Journals may legitimately repeat a key; keep the first (stable).
+            m.entry(f.key.clone()).or_insert_with(|| s.clone());
+        }
+    }
+    m
 }
 
 /// Parse `journalctl -o json` output (one JSON object per line) into field maps,
 /// keeping only JSON *string* values. Non-string values (byte arrays for binary
 /// fields, numbers) are dropped so both sides compare like-for-like. Blank lines
 /// and lines that are not JSON objects are ignored.
-fn parse_oracle_jsonl(_stdout: &str) -> Vec<FieldMap> {
-    Vec::new() // RED stub
+fn parse_oracle_jsonl(stdout: &str) -> Vec<FieldMap> {
+    let mut out = Vec::new();
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(serde_json::Value::Object(obj)) = serde_json::from_str::<serde_json::Value>(line)
+        else {
+            continue;
+        };
+        let mut m = BTreeMap::new();
+        for (k, v) in obj {
+            if let serde_json::Value::String(s) = v {
+                m.insert(k, s);
+            }
+        }
+        out.push(m);
+    }
+    out
 }
 
 /// Count occurrences of each value under `key` across all entries.
-fn field_multiset(_maps: &[FieldMap], _key: &str) -> BTreeMap<String, usize> {
-    BTreeMap::new() // RED stub
+fn field_multiset(maps: &[FieldMap], key: &str) -> BTreeMap<String, usize> {
+    let mut ms: BTreeMap<String, usize> = BTreeMap::new();
+    for m in maps {
+        if let Some(v) = m.get(key) {
+            *ms.entry(v.clone()).or_insert(0) += 1;
+        }
+    }
+    ms
 }
 
 /// Reconcile the crate's decode (`ours`) against the oracle (`theirs`).
@@ -54,12 +85,30 @@ fn field_multiset(_maps: &[FieldMap], _key: &str) -> BTreeMap<String, usize> {
 ///      on field content; the count check already guards the other direction.
 ///
 /// Returns `Ok(())` on agreement, or `Err(human_readable_diff)` on mismatch.
-fn reconcile(
-    _ours: &[FieldMap],
-    _theirs: &[FieldMap],
-    _sample_keys: &[&str],
-) -> Result<(), String> {
-    Ok(()) // RED stub
+fn reconcile(ours: &[FieldMap], theirs: &[FieldMap], sample_keys: &[&str]) -> Result<(), String> {
+    if ours.len() != theirs.len() {
+        return Err(format!(
+            "entry count mismatch: crate parsed {}, journalctl reported {}",
+            ours.len(),
+            theirs.len()
+        ));
+    }
+    for &key in sample_keys {
+        let theirs_ms = field_multiset(theirs, key);
+        if theirs_ms.is_empty() {
+            continue; // oracle has no such field; nothing to corroborate against
+        }
+        let ours_ms = field_multiset(ours, key);
+        for (val, &count) in &ours_ms {
+            let oracle_count = theirs_ms.get(val).copied().unwrap_or(0);
+            if count > oracle_count {
+                return Err(format!(
+                    "field '{key}' value {val:?}: crate produced {count} but oracle only has {oracle_count}"
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 // --------------------------------------------------------------------------

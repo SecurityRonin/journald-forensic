@@ -12,5 +12,9 @@ forensicnomicon = { workspace = true }
 journald-core = { workspace = true }
 serde = { workspace = true }
 
+[dev-dependencies]
+# journalctl differential-oracle test parses `journalctl -o json` output.
+serde_json = { workspace = true }
+
 [lints]
 workspace = true
