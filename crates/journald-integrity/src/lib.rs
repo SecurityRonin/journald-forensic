@@ -2,6 +2,8 @@
 //!
 //! Detects sequence gaps, timestamp regressions, truncation, and suspicious state.
 
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+
 /// A detected integrity anomaly in a journal file.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IntegrityIndicator {
