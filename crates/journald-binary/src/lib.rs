@@ -2,6 +2,8 @@
 //!
 //! All functions accept `&[u8]` slices — no file I/O.
 
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+
 use journald_core::JournalError;
 
 // KNOWLEDGE constants live in forensicnomicon; re-export for downstream crates.
@@ -56,15 +58,26 @@ pub struct ObjectHeader {
     pub size: u64,
 }
 
+/// Copy the `N`-byte window at `off` out of `buf`, or `None` if it does not fit.
+///
+/// The scalar counterpart is `safe_read`; this covers the fixed-width byte
+/// arrays (magic, 128-bit IDs) that it does not model, with the same
+/// return-`None`-rather-than-panic contract.
+fn fixed<const N: usize>(buf: &[u8], off: usize) -> Option<[u8; N]> {
+    let end = off.checked_add(N)?;
+    let mut out = [0u8; N];
+    out.copy_from_slice(buf.get(off..end)?);
+    Some(out)
+}
+
 /// Verify that `buf` begins with the journal magic bytes.
 pub fn parse_journal_magic(buf: &[u8]) -> Result<(), JournalError> {
-    if buf.len() < 8 {
+    let Some(found) = fixed::<8>(buf, 0) else {
         return Err(JournalError::BufferTooShort {
             needed: 8,
             got: buf.len(),
         });
-    }
-    let found: [u8; 8] = buf[..8].try_into().unwrap();
+    };
     if &found != JOURNAL_MAGIC {
         return Err(JournalError::InvalidMagic { found });
     }
@@ -107,45 +120,34 @@ pub fn parse_header(buf: &[u8]) -> Result<JournalHeader, JournalError> {
     }
     parse_journal_magic(buf)?;
 
-    let cf_start = header_offset::COMPATIBLE_FLAGS;
-    let compatible_flags = u32::from_le_bytes(buf[cf_start..cf_start + 4].try_into().unwrap());
-    let icf_start = header_offset::INCOMPATIBLE_FLAGS;
-    let incompatible_flags = u32::from_le_bytes(buf[icf_start..icf_start + 4].try_into().unwrap());
-    let state = match buf[header_offset::STATE] {
+    // Every field below is read through a bounded reader (ADR-0012), so the
+    // MIN_HEADER_SIZE guard above is a diagnostic, not the thing keeping these
+    // reads in range.
+    let compatible_flags = safe_read::le_u32(buf, header_offset::COMPATIBLE_FLAGS);
+    let incompatible_flags = safe_read::le_u32(buf, header_offset::INCOMPATIBLE_FLAGS);
+    let state = match safe_read::u8(buf, header_offset::STATE) {
         0 => JournalState::Offline,
         2 => JournalState::Archived,
         _ => JournalState::Online, // 1 = Online; treat unknown as Online (suspicious)
     };
 
-    let mid = header_offset::MACHINE_ID;
-    let machine_id: [u8; 16] = buf[mid..mid + 16].try_into().unwrap();
-    let bid = header_offset::BOOT_ID;
-    let boot_id: [u8; 16] = buf[bid..bid + 16].try_into().unwrap();
-    let sid = header_offset::SEQNUM_ID;
-    let seqnum_id: [u8; 16] = buf[sid..sid + 16].try_into().unwrap();
+    let (Some(machine_id), Some(boot_id), Some(seqnum_id)) = (
+        fixed::<16>(buf, header_offset::MACHINE_ID),
+        fixed::<16>(buf, header_offset::BOOT_ID),
+        fixed::<16>(buf, header_offset::SEQNUM_ID),
+    ) else {
+        return Err(JournalError::BufferTooShort {
+            needed: header_offset::MIN_HEADER_SIZE,
+            got: buf.len(),
+        });
+    };
 
-    let off_n_objects = header_offset::N_OBJECTS;
-    let n_objects = u64::from_le_bytes(buf[off_n_objects..off_n_objects + 8].try_into().unwrap());
-    let off_n_entries = header_offset::N_ENTRIES;
-    let n_entries = u64::from_le_bytes(buf[off_n_entries..off_n_entries + 8].try_into().unwrap());
-    let off_tail_seqnum = header_offset::TAIL_ENTRY_SEQNUM;
-    let tail_entry_seqnum = u64::from_le_bytes(
-        buf[off_tail_seqnum..off_tail_seqnum + 8]
-            .try_into()
-            .unwrap(),
-    );
-    let off_head_seqnum = header_offset::HEAD_ENTRY_SEQNUM;
-    let head_entry_seqnum = u64::from_le_bytes(
-        buf[off_head_seqnum..off_head_seqnum + 8]
-            .try_into()
-            .unwrap(),
-    );
-    let off_head_rt = header_offset::HEAD_ENTRY_REALTIME;
-    let head_entry_realtime =
-        u64::from_le_bytes(buf[off_head_rt..off_head_rt + 8].try_into().unwrap());
-    let off_tail_rt = header_offset::TAIL_ENTRY_REALTIME;
-    let tail_entry_realtime =
-        u64::from_le_bytes(buf[off_tail_rt..off_tail_rt + 8].try_into().unwrap());
+    let n_objects = safe_read::le_u64(buf, header_offset::N_OBJECTS);
+    let n_entries = safe_read::le_u64(buf, header_offset::N_ENTRIES);
+    let tail_entry_seqnum = safe_read::le_u64(buf, header_offset::TAIL_ENTRY_SEQNUM);
+    let head_entry_seqnum = safe_read::le_u64(buf, header_offset::HEAD_ENTRY_SEQNUM);
+    let head_entry_realtime = safe_read::le_u64(buf, header_offset::HEAD_ENTRY_REALTIME);
+    let tail_entry_realtime = safe_read::le_u64(buf, header_offset::TAIL_ENTRY_REALTIME);
 
     Ok(JournalHeader {
         compatible_flags,
@@ -177,10 +179,9 @@ pub fn parse_object_header(buf: &[u8]) -> Result<ObjectHeader, JournalError> {
             got: buf.len(),
         });
     }
-    let object_type = object_type_from_byte(buf[object_header_offset::TYPE])?;
-    let flags = buf[object_header_offset::FLAGS];
-    let sz = object_header_offset::SIZE;
-    let size = u64::from_le_bytes(buf[sz..sz + 8].try_into().unwrap());
+    let object_type = object_type_from_byte(safe_read::u8(buf, object_header_offset::TYPE))?;
+    let flags = safe_read::u8(buf, object_header_offset::FLAGS);
+    let size = safe_read::le_u64(buf, object_header_offset::SIZE);
     Ok(ObjectHeader {
         object_type,
         flags,

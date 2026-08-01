@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+safe-read.workspace = true
 forensicnomicon = { workspace = true }
 journald-core = { workspace = true }
 serde = { workspace = true }
