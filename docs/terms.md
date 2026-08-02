@@ -1,7 +1,7 @@
 # Terms of Service
 
 **journald-forensic** is free, open-source software licensed under the
-[MIT License](../LICENSE). These terms supplement, but do not override, that
+[Apache License 2.0](../LICENSE). These terms supplement, but do not override, that
 licence.
 
 - **As-is, no warranty.** The software is provided "as is", without warranty of
@@ -17,6 +17,6 @@ licence.
 - **No professional relationship.** Use of this software does not create any
   professional, advisory, or expert-witness relationship with the authors.
 
-By using the software you accept these terms and the terms of the MIT License.
+By using the software you accept these terms and the terms of the Apache License 2.0.
 
 © 2026 Security Ronin Ltd
