@@ -3,7 +3,11 @@ name = "journald-cli"
 description = "jd4n6 - systemd journal (journald) forensic analysis CLI"
 version = "0.2.0"
 edition.workspace = true
-rust-version.workspace = true
+# NOT inherited from the workspace. The workspace declares 1.75 for its library
+# members; this crate ships the jd4n6 binary and depends on clap, whose
+# clap_lex/clap_builder are on edition 2024 and fail at MANIFEST PARSE below
+# cargo 1.85. Inheriting 1.75 declared a floor this crate cannot meet.
+rust-version = "1.85"
 license.workspace = true
 repository.workspace = true
 
