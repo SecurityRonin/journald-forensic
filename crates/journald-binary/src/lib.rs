@@ -70,6 +70,16 @@ fn fixed<const N: usize>(buf: &[u8], off: usize) -> Option<[u8; N]> {
     Some(out)
 }
 
+/// The error `parse_header` reports when `buf` is too small to hold a complete
+/// journal header. Shared by the length guard and by the bounded-read fallback
+/// below it so the two cannot drift apart.
+fn header_too_short(buf: &[u8]) -> JournalError {
+    JournalError::BufferTooShort {
+        needed: header_offset::MIN_HEADER_SIZE,
+        got: buf.len(),
+    }
+}
+
 /// Verify that `buf` begins with the journal magic bytes.
 pub fn parse_journal_magic(buf: &[u8]) -> Result<(), JournalError> {
     let Some(found) = fixed::<8>(buf, 0) else {
@@ -113,10 +123,7 @@ pub fn parse_journal_magic(buf: &[u8]) -> Result<(), JournalError> {
 /// ```
 pub fn parse_header(buf: &[u8]) -> Result<JournalHeader, JournalError> {
     if buf.len() < header_offset::MIN_HEADER_SIZE {
-        return Err(JournalError::BufferTooShort {
-            needed: header_offset::MIN_HEADER_SIZE,
-            got: buf.len(),
-        });
+        return Err(header_too_short(buf));
     }
     parse_journal_magic(buf)?;
 
@@ -136,10 +143,13 @@ pub fn parse_header(buf: &[u8]) -> Result<JournalHeader, JournalError> {
         fixed::<16>(buf, header_offset::BOOT_ID),
         fixed::<16>(buf, header_offset::SEQNUM_ID),
     ) else {
-        return Err(JournalError::BufferTooShort {
-            needed: header_offset::MIN_HEADER_SIZE,
-            got: buf.len(),
-        });
+        // cov:unreachable: buf.len() >= MIN_HEADER_SIZE (224) by the guard at the
+        // top of this function, and the furthest byte these three reads touch is
+        // SEQNUM_ID (72) + 16 = 88. So `fixed::<16>` cannot return None here.
+        // Kept as a defence-in-depth guard: it is what stops a future change to
+        // the offsets or to MIN_HEADER_SIZE from turning into an out-of-bounds
+        // read instead of a clean error (ADR-0012).
+        return Err(header_too_short(buf)); // cov:unreachable: see above
     };
 
     let n_objects = safe_read::le_u64(buf, header_offset::N_OBJECTS);
