@@ -2,6 +2,8 @@
 //!
 //! All functions accept `&[u8]` slices — no file I/O.
 
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+
 use journald_binary::JOURNAL_MAGIC;
 
 /// A carved object found by scanning raw bytes.
@@ -45,8 +47,8 @@ pub fn scan_for_entry_objects(data: &[u8]) -> Vec<CarvedEntry> {
     let mut i = 0usize;
     while i + 16 <= data.len() {
         let buf = &data[i..];
-        if buf[0] == 3 && is_plausible_object_header(buf) {
-            let size = u64::from_le_bytes(buf[8..16].try_into().unwrap());
+        if safe_read::u8(buf, 0) == 3 && is_plausible_object_header(buf) {
+            let size = safe_read::le_u64(buf, 8);
             // Safe: we only process files that fit in memory (usize range)
             #[allow(clippy::cast_possible_truncation)]
             let end = ((i as u64).saturating_add(size) as usize).min(data.len());
@@ -79,11 +81,11 @@ pub fn is_plausible_object_header(buf: &[u8]) -> bool {
     if buf.len() < 16 {
         return false;
     }
-    let type_byte = buf[0];
+    let type_byte = safe_read::u8(buf, 0);
     if type_byte > 7 {
         return false;
     }
-    let size = u64::from_le_bytes(buf[8..16].try_into().unwrap());
+    let size = safe_read::le_u64(buf, 8);
     size > 0
 }
 

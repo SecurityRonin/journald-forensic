@@ -1,5 +1,7 @@
 //! Core domain types for systemd journal forensic analysis.
 
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+
 use chrono::{DateTime, TimeZone, Utc};
 use std::fmt;
 use thiserror::Error;
@@ -170,7 +172,8 @@ fn uuid_to_hex(bytes: &[u8; 16]) -> String {
     use fmt::Write as _;
     let mut s = String::with_capacity(32);
     for b in bytes {
-        write!(s, "{b:02x}").unwrap();
+        // Writing to a String is infallible; the Result only satisfies fmt::Write.
+        let _ = write!(s, "{b:02x}");
     }
     s
 }

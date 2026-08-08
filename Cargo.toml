@@ -15,6 +15,9 @@ license = "Apache-2.0"
 repository = "https://github.com/SecurityRonin/journald-forensic"
 
 [workspace.dependencies]
+# Bounded integer reads over untrusted journal bytes (ADR-0012). MSRV 1.75,
+# matching this workspace\'s library floor.
+safe-read = "0.2"
 forensicnomicon = "1"
 chrono = { version = "0.4", default-features = false, features = ["alloc", "serde"] }
 clap = { version = "4", features = ["derive"] }
@@ -31,9 +34,21 @@ journald-binary = { version = "0.2.0", path = "crates/journald-binary" }
 journald-integrity = { version = "0.2.0", path = "crates/journald-integrity" }
 journald-carver = { version = "0.2.0", path = "crates/journald-carver" }
 
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
 [workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
-module_name_repetitions = "allow"
-must_use_candidate = "allow"
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
+correctness = "deny"
+suspicious = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+module_name_repetitions = { level = "allow", priority = 1 }
+must_use_candidate = { level = "allow", priority = 1 }
+missing_errors_doc = { level = "allow", priority = 1 }
+missing_panics_doc = { level = "allow", priority = 1 }
+cast_possible_truncation = { level = "allow", priority = 1 }
+cast_possible_wrap = { level = "allow", priority = 1 }
+cast_sign_loss = { level = "allow", priority = 1 }
+cast_precision_loss = { level = "allow", priority = 1 }
