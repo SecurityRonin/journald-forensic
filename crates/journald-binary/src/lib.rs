@@ -4,7 +4,7 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
-use journald_core::JournalError;
+use journald_core::{JournalEntry, JournalError, JournalField, JournalFieldValue};
 
 // KNOWLEDGE constants live in forensicnomicon; re-export for downstream crates.
 pub use forensicnomicon::journald::JOURNAL_MAGIC;
@@ -212,6 +212,132 @@ pub fn object_type_from_byte(b: u8) -> Result<JournalObjectType, JournalError> {
         v if v == nom_object_type::TAG => Ok(JournalObjectType::Tag),
         _ => Err(JournalError::InvalidObjectType { type_byte: b }),
     }
+}
+
+/// Decode the journal arena into a stream of [`journald_core::JournalEntry`] values.
+///
+/// Best-effort sequential walk of the object arena (from after the header) that
+/// yields every `Entry` object with its resolved `KEY=value` fields. This is the
+/// public library seam behind the CLI's timeline/fields/search commands; keeping
+/// the walk here rather than in the binary is what makes it fuzzable and testable
+/// against a journalctl oracle.
+///
+/// It does not follow hash-table chains — it walks the arena sequentially from
+/// after the header, resolving each entry item's referenced `Data` object.
+///
+/// Panic-free on arbitrary input: every integer read goes through `safe-read`,
+/// which bounds-checks and returns `0` out of range (ADR-0012), and every offset
+/// is computed with saturating arithmetic so a hostile size or offset cannot
+/// overflow `usize`.
+#[allow(clippy::cast_possible_truncation)]
+#[must_use]
+pub fn parse_entries(data: &[u8]) -> Vec<JournalEntry> {
+    // The journal header is at offset 0; header_size is a LE u64 at offset 88.
+    const MIN_HEADER: usize = 96;
+    const HEADER_SIZE_OFF: usize = 88;
+    // Smallest arena start we will trust even if the header understates it.
+    const MIN_ARENA_START: usize = 240;
+
+    if data.len() < MIN_HEADER {
+        return Vec::new();
+    }
+    let arena_start = (safe_read::le_u64(data, HEADER_SIZE_OFF) as usize).max(MIN_ARENA_START);
+    if arena_start >= data.len() {
+        return Vec::new();
+    }
+
+    let mut entries = Vec::new();
+    let mut pos = arena_start;
+
+    while pos.saturating_add(16) <= data.len() {
+        let Ok(obj) = parse_object_header(&data[pos..]) else {
+            pos = pos.saturating_add(8);
+            continue;
+        };
+        let size = obj.size as usize;
+        if size < 16 {
+            pos = pos.saturating_add(8);
+            continue;
+        }
+
+        if obj.object_type == JournalObjectType::Entry {
+            // Entry object layout (after the 16-byte object header):
+            //   +16  seqnum   u64
+            //   +24  realtime u64
+            //   +32  monotonic u64
+            //   +40  boot_id  [u8; 16]
+            //   +56  xor_hash u64
+            //   +64  items[]  (offset u64, hash u64) * N
+            if pos.saturating_add(64) > data.len() {
+                pos = pos.saturating_add(align8(size));
+                continue;
+            }
+            let seqnum = safe_read::le_u64(data, pos.saturating_add(16));
+            let realtime_us = safe_read::le_u64(data, pos.saturating_add(24));
+            let monotonic_us = safe_read::le_u64(data, pos.saturating_add(32));
+            let boot_id =
+                safe_read::try_bytes::<16>(data, pos.saturating_add(40)).unwrap_or([0u8; 16]);
+
+            let obj_end = pos.saturating_add(size).min(data.len());
+            let mut fields = Vec::new();
+            let mut item_pos = pos.saturating_add(64);
+
+            while item_pos.saturating_add(16) <= obj_end {
+                let data_offset = safe_read::le_u64(data, item_pos) as usize;
+                item_pos = item_pos.saturating_add(16);
+
+                if data_offset.saturating_add(16) > data.len() {
+                    continue;
+                }
+                let Ok(data_obj) = parse_object_header(&data[data_offset..]) else {
+                    continue;
+                };
+                if data_obj.object_type != JournalObjectType::Data {
+                    continue;
+                }
+                // A Data object's payload starts at +64 within the object.
+                let payload_start = data_offset.saturating_add(64);
+                let payload_end = data_offset
+                    .saturating_add(data_obj.size as usize)
+                    .min(data.len());
+                if payload_start >= payload_end {
+                    continue;
+                }
+                let payload = &data[payload_start..payload_end];
+                // payload is "KEY=value" in raw bytes.
+                if let Some(eq) = payload.iter().position(|&b| b == b'=') {
+                    let key = String::from_utf8_lossy(&payload[..eq]).into_owned();
+                    let raw = &payload[eq.saturating_add(1)..];
+                    let value = match std::str::from_utf8(raw) {
+                        Ok(text) => JournalFieldValue::Text(text.to_owned()),
+                        Err(_) => JournalFieldValue::Binary(raw.to_vec()),
+                    };
+                    fields.push(JournalField { key, value });
+                }
+            }
+            entries.push(JournalEntry {
+                seqnum,
+                realtime_us,
+                monotonic_us,
+                boot_id,
+                fields,
+            });
+        }
+
+        pos = pos.saturating_add(align8(size));
+    }
+    entries
+}
+
+/// Round `size` up to the next 8-byte boundary, with a minimum step of 8.
+///
+/// Journal objects are 64-bit aligned: the next object begins at
+/// `ALIGN64(offset + size)`, not `offset + size`. Advancing by the raw size
+/// derails the sequential walk at the first object whose size is not a multiple
+/// of 8 (e.g. a Data object carrying a short "KEY=value" payload). The `.max(8)`
+/// floor guarantees forward progress, so a zero-size object cannot stall it.
+fn align8(size: usize) -> usize {
+    (size.saturating_add(7) & !7).max(8)
 }
 
 #[cfg(test)]

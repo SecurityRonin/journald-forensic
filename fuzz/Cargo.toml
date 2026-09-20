@@ -1,0 +1,23 @@
+[package]
+name = "journald-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+journald-binary = { path = "../crates/journald-binary" }
+
+# Detach from the parent workspace: cargo-fuzz builds this crate on its own,
+# and it must not inherit the workspace's stable-only lints / MSRV.
+[workspace]
+
+[[bin]]
+name = "fuzz_parse_entries"
+path = "fuzz_targets/fuzz_parse_entries.rs"
+test = false
+doc = false
+bench = false

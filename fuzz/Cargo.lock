@@ -100,6 +100,7 @@ version = "0.2.0"
 dependencies = [
  "forensicnomicon",
  "journald-core",
+ "safe-read",
  "serde",
 ]
 
@@ -168,6 +169,12 @@ name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
+
+[[package]]
+name = "safe-read"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "736a7e46a222ed0f1f8724f0aa0d6a2e86d676cda2b35bcdd4d4e31f7b508f65"
 
 [[package]]
 name = "serde"

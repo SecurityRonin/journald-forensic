@@ -11,7 +11,8 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use journald_binary::{parse_journal_magic, parse_object_header, JournalObjectType};
+use journald_binary::{parse_entries, parse_journal_magic};
+use journald_core::{JournalEntry, JournalFieldValue};
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -81,149 +82,51 @@ fn read_and_validate(path: &PathBuf) -> Result<Vec<u8>> {
     Ok(data)
 }
 
-/// Parsed entry from the journal arena walk.
-type EntryRecord = (u64, u64, u64, Vec<(String, Vec<u8>)>);
-
-/// Very lightweight entry scanner: walk objects sequentially looking for Entry objects.
-/// Returns a list of `(seqnum, realtime_us, monotonic_us, fields)`.
-///
-/// This is a best-effort implementation for the CLI — it does not follow hash table
-/// chains, but walks the arena sequentially from after the header.
-#[allow(clippy::cast_possible_truncation)]
-fn scan_entries(data: &[u8]) -> Vec<EntryRecord> {
-    // The journal header is at offset 0; header_size is at offset 88..96 (LE u64).
-    const MIN_HEADER: usize = 96;
-    if data.len() < MIN_HEADER {
-        return Vec::new();
-    }
-    let raw_header_size = u64::from_le_bytes(data[88..96].try_into().unwrap_or([0; 8])) as usize;
-    let arena_start = raw_header_size.max(240);
-    if arena_start >= data.len() {
-        return Vec::new();
-    }
-
-    let mut entries = Vec::new();
-    let mut pos = arena_start;
-
-    while pos + 16 <= data.len() {
-        let buf = &data[pos..];
-        let Ok(obj) = parse_object_header(buf) else {
-            pos += 8;
-            continue;
+/// Render a decoded [`JournalEntry`] as a flat JSON object (seqnum, timestamps,
+/// then each field as `key: "value"`).
+fn entry_to_json(entry: &JournalEntry) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert(
+        "seqnum".to_string(),
+        serde_json::Value::Number(entry.seqnum.into()),
+    );
+    obj.insert(
+        "realtime_us".to_string(),
+        serde_json::Value::Number(entry.realtime_us.into()),
+    );
+    obj.insert(
+        "monotonic_us".to_string(),
+        serde_json::Value::Number(entry.monotonic_us.into()),
+    );
+    for field in &entry.fields {
+        let value_str = match &field.value {
+            JournalFieldValue::Text(s) => s.clone(),
+            JournalFieldValue::Binary(b) => String::from_utf8_lossy(b).into_owned(),
         };
-        let size = obj.size as usize;
-        if size < 16 {
-            pos += 8;
-            continue;
-        }
-
-        if obj.object_type == JournalObjectType::Entry {
-            // Entry object layout (after the 16-byte object header):
-            //   +16  seqnum   u64
-            //   +24  realtime u64
-            //   +32  monotonic u64
-            //   +40  boot_id  [u8; 16]
-            //   +56  xor_hash u64
-            //   +64  items[]  (offset u64, hash u64) * N
-            if pos + 64 > data.len() {
-                pos += align8(size);
-                continue;
-            }
-            let seqnum = u64::from_le_bytes(data[pos + 16..pos + 24].try_into().unwrap_or([0; 8]));
-            let realtime =
-                u64::from_le_bytes(data[pos + 24..pos + 32].try_into().unwrap_or([0; 8]));
-            let monotonic =
-                u64::from_le_bytes(data[pos + 32..pos + 40].try_into().unwrap_or([0; 8]));
-
-            let items_start = pos + 64;
-            let obj_end = (pos + size).min(data.len());
-            let mut fields = Vec::new();
-
-            let mut item_pos = items_start;
-            while item_pos + 16 <= obj_end {
-                let data_offset =
-                    u64::from_le_bytes(data[item_pos..item_pos + 8].try_into().unwrap_or([0; 8]))
-                        as usize;
-                item_pos += 16;
-
-                if data_offset + 16 > data.len() {
-                    continue;
-                }
-                let Ok(data_obj) = parse_object_header(&data[data_offset..]) else {
-                    continue;
-                };
-                if data_obj.object_type != JournalObjectType::Data {
-                    continue;
-                }
-                // Data object payload starts at +64 within the Data object
-                let payload_start = data_offset + 64;
-                let payload_end = (data_offset + data_obj.size as usize).min(data.len());
-                if payload_start >= payload_end {
-                    continue;
-                }
-                let payload = &data[payload_start..payload_end];
-                // payload is "KEY=value" in bytes
-                if let Some(eq_pos) = payload.iter().position(|&b| b == b'=') {
-                    let key = String::from_utf8_lossy(&payload[..eq_pos]).into_owned();
-                    let value = payload[eq_pos + 1..].to_vec();
-                    fields.push((key, value));
-                }
-            }
-            entries.push((seqnum, realtime, monotonic, fields));
-        }
-
-        pos += align8(size);
+        obj.insert(field.key.clone(), serde_json::Value::String(value_str));
     }
-    entries
-}
-
-/// Round `size` up to the next 8-byte boundary, with a minimum step of 8.
-///
-/// Journal objects are 64-bit aligned: the next object begins at
-/// `ALIGN64(offset + size)`, not `offset + size`. Advancing by the raw size
-/// derails the sequential walk at the first object whose size is not a multiple
-/// of 8 (e.g. a Data object carrying a short "KEY=value" payload), so alignment
-/// is mandatory to walk a real journal arena.
-fn align8(size: usize) -> usize {
-    ((size + 7) & !7).max(8)
+    serde_json::Value::Object(obj)
 }
 
 fn cmd_timeline(path: &PathBuf) -> Result<()> {
     let data = read_and_validate(path)?;
-    let entries = scan_entries(&data);
+    let entries = parse_entries(&data);
     if entries.is_empty() {
         eprintln!("no entries found in '{}'", path.display());
     }
-    for (seqnum, realtime_us, monotonic_us, fields) in &entries {
-        let mut obj = serde_json::Map::new();
-        obj.insert(
-            "seqnum".to_string(),
-            serde_json::Value::Number((*seqnum).into()),
-        );
-        obj.insert(
-            "realtime_us".to_string(),
-            serde_json::Value::Number((*realtime_us).into()),
-        );
-        obj.insert(
-            "monotonic_us".to_string(),
-            serde_json::Value::Number((*monotonic_us).into()),
-        );
-        for (key, val) in fields {
-            let value_str = String::from_utf8_lossy(val).into_owned();
-            obj.insert(key.clone(), serde_json::Value::String(value_str));
-        }
-        println!("{}", serde_json::Value::Object(obj));
+    for entry in &entries {
+        println!("{}", entry_to_json(entry));
     }
     Ok(())
 }
 
 fn cmd_fields(path: &PathBuf) -> Result<()> {
     let data = read_and_validate(path)?;
-    let entries = scan_entries(&data);
+    let entries = parse_entries(&data);
     let mut field_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for (_, _, _, fields) in &entries {
-        for (key, _) in fields {
-            field_names.insert(key.clone());
+    for entry in &entries {
+        for field in &entry.fields {
+            field_names.insert(field.key.clone());
         }
     }
     for name in &field_names {
@@ -237,31 +140,18 @@ fn cmd_search(path: &PathBuf, filter: &str) -> Result<()> {
         .split_once('=')
         .ok_or_else(|| anyhow::anyhow!("filter must be FIELD=VALUE, got: '{filter}'"))?;
     let data = read_and_validate(path)?;
-    let entries = scan_entries(&data);
+    let entries = parse_entries(&data);
     let filter_val_bytes = filter_val.as_bytes();
-    for (seqnum, realtime_us, monotonic_us, fields) in &entries {
-        let matches = fields
-            .iter()
-            .any(|(k, v)| k == filter_key && v.as_slice() == filter_val_bytes);
+    for entry in &entries {
+        let matches = entry.fields.iter().any(|f| {
+            f.key == filter_key
+                && match &f.value {
+                    JournalFieldValue::Text(s) => s.as_bytes() == filter_val_bytes,
+                    JournalFieldValue::Binary(b) => b.as_slice() == filter_val_bytes,
+                }
+        });
         if matches {
-            let mut obj = serde_json::Map::new();
-            obj.insert(
-                "seqnum".to_string(),
-                serde_json::Value::Number((*seqnum).into()),
-            );
-            obj.insert(
-                "realtime_us".to_string(),
-                serde_json::Value::Number((*realtime_us).into()),
-            );
-            obj.insert(
-                "monotonic_us".to_string(),
-                serde_json::Value::Number((*monotonic_us).into()),
-            );
-            for (key, val) in fields {
-                let value_str = String::from_utf8_lossy(val).into_owned();
-                obj.insert(key.clone(), serde_json::Value::String(value_str));
-            }
-            println!("{}", serde_json::Value::Object(obj));
+            println!("{}", entry_to_json(entry));
         }
     }
     Ok(())

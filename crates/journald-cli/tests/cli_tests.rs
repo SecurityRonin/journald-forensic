@@ -173,7 +173,7 @@ fn jd_wrong_magic_exits_nonzero() {
 
 #[test]
 fn jd_valid_magic_but_below_min_header_reports_no_entries() {
-    // Valid magic but shorter than MIN_HEADER (96) → scan_entries returns empty,
+    // Valid magic but shorter than MIN_HEADER (96) → parse_entries returns empty,
     // exercising the len < MIN_HEADER early-return and the "no entries" branch.
     let mut buf = MAGIC.to_vec();
     buf.extend_from_slice(&[0u8; 80]); // total 88 bytes < 96
@@ -204,12 +204,12 @@ fn jd_valid_magic_huge_header_size_reports_no_entries() {
 }
 
 // --- Malformed-arena robustness (attacker-crafted journals) ---
-// These drive scan_entries' defensive recovery arms. The reader must never panic
+// These drive parse_entries' defensive recovery arms. The reader must never panic
 // and must degrade to "no entries" rather than crash or produce garbage. The bytes
 // are constructed here (committed with the test), so the gate needs no external
 // file. Layout constants mirror the systemd on-disk object header (type@0, size@8).
 
-/// 240-byte header: magic + `header_size`=240 so the `scan_entries` arena starts at 240.
+/// 240-byte header: magic + `header_size`=240 so the `parse_entries` arena starts at 240.
 fn base_header() -> Vec<u8> {
     let mut h = vec![0u8; 240];
     h[..8].copy_from_slice(MAGIC);
@@ -228,7 +228,7 @@ fn obj_header(ty: u8, size: u64) -> [u8; 16] {
 #[test]
 fn jd_arena_with_unknown_object_type_does_not_crash() {
     // An object whose type byte is out of range (99 > 7) makes parse_object_header
-    // fail; scan_entries must step forward 8 bytes and keep walking, not abort.
+    // fail; parse_entries must step forward 8 bytes and keep walking, not abort.
     let mut buf = base_header();
     buf.extend_from_slice(&obj_header(99, 32)); // bad type at offset 240
     let (_dir, path) = temp_file("badtype.journal", &buf);
@@ -286,4 +286,52 @@ fn jd_entry_items_pointing_at_bad_data_offsets_do_not_crash() {
     jd().args(["timeline", path.to_str().unwrap()])
         .assert()
         .success();
+}
+
+/// Build a journal with one Entry whose single field carries a NON-UTF-8 value
+/// (`BIN=\xff\xfe`) — a real forensic case (e.g. a `COREDUMP` blob). Layout
+/// mirrors the systemd on-disk format: Data at 240 (size 70, payload at +64),
+/// Entry at ALIGN64(240+70)=320 (size 80, item[0] → the Data at 240).
+fn journal_with_binary_field() -> Vec<u8> {
+    let mut buf = base_header();
+    buf.resize(512, 0);
+    let data_off = 240usize;
+    buf[data_off..data_off + 16].copy_from_slice(&obj_header(1, 70)); // Data
+    buf[data_off + 64..data_off + 70].copy_from_slice(b"BIN=\xff\xfe");
+    let entry_off = 320usize;
+    buf[entry_off..entry_off + 16].copy_from_slice(&obj_header(3, 80)); // Entry
+    buf[entry_off + 16..entry_off + 24].copy_from_slice(&1u64.to_le_bytes()); // seqnum
+    buf[entry_off + 64..entry_off + 72].copy_from_slice(&(data_off as u64).to_le_bytes());
+    buf
+}
+
+#[test]
+fn jd_timeline_renders_binary_field_lossily() {
+    // timeline's entry_to_json takes the Binary arm (from_utf8_lossy). The field
+    // key is preserved; the value renders with the U+FFFD replacement char.
+    let (_dir, path) = temp_file("binfield.journal", &journal_with_binary_field());
+    let out = jd()
+        .args(["timeline", path.to_str().unwrap()])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(out).unwrap();
+    assert_eq!(stdout.lines().count(), 1, "one entry expected");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert!(v.get("BIN").is_some(), "binary field key must be present");
+    assert!(v["BIN"].as_str().unwrap().contains('\u{FFFD}'));
+}
+
+#[test]
+fn jd_search_compares_binary_field_value() {
+    // search's per-field match takes the Binary comparison arm when the filter
+    // key names a binary-valued field. The raw bytes (\xff\xfe) are not equal to
+    // the ASCII filter value, so nothing matches — but the arm is exercised.
+    let (_dir, path) = temp_file("binsearch.journal", &journal_with_binary_field());
+    jd().args(["search", path.to_str().unwrap(), "BIN=notmatching"])
+        .assert()
+        .success()
+        .stdout("");
 }
