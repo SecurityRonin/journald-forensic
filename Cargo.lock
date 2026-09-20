@@ -288,6 +288,7 @@ dependencies = [
  "forensicnomicon",
  "journald-core",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
